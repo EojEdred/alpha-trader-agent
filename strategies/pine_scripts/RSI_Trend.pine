@@ -1,0 +1,54 @@
+//@version=5
+strategy("AlphaTrader - RSI + EMA Trend", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// === INPUTS ===
+rsiLen = input.int(14, "RSI Period")
+rsiOversold = input.int(30, "RSI Oversold")
+rsiOverbought = input.int(70, "RSI Overbought")
+emaTrendLen = input.int(200, "Trend EMA")
+
+// === INDICATORS ===
+rsi = ta.rsi(close, rsiLen)
+emaTrend = ta.ema(close, emaTrendLen)
+
+// === CONDITIONS ===
+// Long: RSI oversold + price above 200 EMA (buy dips in uptrends)
+longCond = rsi < rsiOversold and close > emaTrend
+
+// Short: RSI overbought + price below 200 EMA (sell rallies in downtrends)
+shortCond = rsi > rsiOverbought and close < emaTrend
+
+// Only signal once per RSI excursion
+longSignal = longCond and not longCond[1]
+shortSignal = shortCond and not shortCond[1]
+
+// === ENTRIES ===
+if longSignal
+    strategy.entry("Long", strategy.long, comment="RSI Dip Long")
+
+if shortSignal
+    strategy.entry("Short", strategy.short, comment="RSI Peak Short")
+
+// === EXITS ===
+// Exit when RSI normalizes
+if strategy.position_size > 0 and rsi > 50
+    strategy.close("Long", comment="RSI Normalized")
+
+if strategy.position_size < 0 and rsi < 50
+    strategy.close("Short", comment="RSI Normalized")
+
+// === PLOTS ===
+plot(emaTrend, "Trend EMA", color=color.new(color.gray, 0), linewidth=2)
+
+// RSI panel
+hline(rsiOverbought, "Overbought", color=color.red)
+hline(50, "Midline", color=color.gray)
+hline(rsiOversold, "Oversold", color=color.green)
+plot(rsi, "RSI", color=color.purple, display=display.pane)
+
+// === ALERTS ===
+alertcondition(longSignal, "RSI Long", "RSI Dip Long on {{ticker}} @ {{close}}")
+alertcondition(shortSignal, "RSI Short", "RSI Peak Short on {{ticker}} @ {{close}}")
+
+// === WEBHOOK ===
+// {"symbol":"{{ticker}}","side":"{{strategy.order.action}}","price":{{close}},"quantity":1,"strategy":"rsi_trend","timeframe":"{{interval}}","passphrase":"YOUR_SECRET"}

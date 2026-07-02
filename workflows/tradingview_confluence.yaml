@@ -1,0 +1,79 @@
+# TradingView Confluence Workflow
+# Uses browser agent to check TradingView for strategy confirmation
+version: "1.0"
+
+workflow:
+  id: tradingview-confluence-v1
+  name: TradingView Confluence Check
+  description: Scans TradingView chart for confluence with capsule signals
+  version: "1.0.0"
+  tenant_id: alpha-trader
+  required_tiers: [T0, T1, T2]
+  success_criteria: TradingView analysis provides confluence or divergence signal
+  phases_used: [Observe, Think, Verify]
+
+  nodes:
+    - id: fetch-capsule-signal
+      name: Fetch Capsule Signal
+      phase: Observe
+      skill_id: run_capsules
+      description: Get latest capsule trade intents
+      inputs: []
+      outputs: [trade_intents]
+      tools: [run_capsules]
+
+    - id: filter-high-conviction
+      name: Filter High Conviction
+      phase: Think
+      skill_id: select_best_trade
+      description: Keep only intents with conviction > 0.75
+      inputs: [trade_intents]
+      outputs: [high_conviction_intents]
+      tools: [select_best_trade]
+
+    - id: tradingview-chart-scan
+      name: TradingView Chart Scan
+      phase: Observe
+      skill_id: tradingview_browser_scan
+      description: Use browser agent to read TradingView chart
+      inputs: [high_conviction_intents]
+      outputs: [tradingview_analysis]
+      tools: [tradingview_browser_scan]
+      constraints:
+        time_budget: 60
+
+    - id: confluence-analysis
+      name: Confluence Analysis
+      phase: Think
+      skill_id: reason_about_setup
+      description: Compare capsule signal with TradingView analysis
+      inputs: [high_conviction_intents, tradingview_analysis]
+      outputs: [confluence_result]
+      tools: [reason_about_setup]
+
+    - id: visual-verify
+      name: Visual Screenshot Verification
+      phase: Verify
+      skill_id: verify_order_visual
+      description: Capture and verify TradingView screenshot
+      inputs: [tradingview_analysis]
+      outputs: [verification_result]
+      tools: [verify_order_visual]
+      constraints:
+        time_budget: 30
+
+    - id: format-confluence-report
+      name: Format Confluence Report
+      phase: Verify
+      skill_id: generate_report
+      description: Report confluence/divergence findings
+      inputs: [confluence_result, verification_result]
+      outputs: [formatted_report]
+      tools: [generate_report]
+
+  edges:
+    - { from: fetch-capsule-signal, to: filter-high-conviction }
+    - { from: filter-high-conviction, to: tradingview-chart-scan, condition: "high_conviction_intents.length > 0" }
+    - { from: tradingview-chart-scan, to: confluence-analysis }
+    - { from: confluence-analysis, to: visual-verify }
+    - { from: visual-verify, to: format-confluence-report }

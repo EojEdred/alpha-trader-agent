@@ -1,0 +1,46 @@
+//@version=5
+strategy("AlphaTrader - VWAP + EMA Trend", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// === INPUTS ===
+emaLen = input.int(21, "EMA Length")
+volumeMult = input.float(1.3, "Volume Multiplier", step=0.1)
+
+// === INDICATORS ===
+vwapValue = ta.vwap(hlc3)
+emaValue = ta.ema(close, emaLen)
+volumeAvg = ta.sma(volume, 20)
+
+// === CONDITIONS ===
+// Long: Price > VWAP + Price > EMA + Volume spike
+longCondition = close > vwapValue and close > emaValue and volume > volumeAvg * volumeMult
+shortCondition = close < vwapValue and close < emaValue and volume > volumeAvg * volumeMult
+
+// Avoid duplicate signals - only on cross
+longCross = longCondition and not (close[1] > vwapValue[1] and close[1] > emaValue[1])
+shortCross = shortCondition and not (close[1] < vwapValue[1] and close[1] < emaValue[1])
+
+// === ENTRIES ===
+if longCross
+    strategy.entry("Long", strategy.long, comment="VWAP Trend Long")
+
+if shortCross
+    strategy.entry("Short", strategy.short, comment="VWAP Trend Short")
+
+// === EXITS ===
+// Exit when price crosses back through VWAP
+if strategy.position_size > 0 and close < vwapValue
+    strategy.close("Long", comment="VWAP Exit")
+
+if strategy.position_size < 0 and close > vwapValue
+    strategy.close("Short", comment="VWAP Exit")
+
+// === PLOTS ===
+plot(vwapValue, "VWAP", color=color.new(color.purple, 0), linewidth=2)
+plot(emaValue, "EMA", color=color.new(color.orange, 0), linewidth=1)
+
+// === ALERTS ===
+alertcondition(longCross, "VWAP Long", "VWAP Trend Long on {{ticker}} @ {{close}}")
+alertcondition(shortCross, "VWAP Short", "VWAP Trend Short on {{ticker}} @ {{close}}")
+
+// === WEBHOOK MESSAGE ===
+// {"symbol":"{{ticker}}","side":"{{strategy.order.action}}","price":{{close}},"quantity":1,"strategy":"vwap_trend","timeframe":"{{interval}}","passphrase":"YOUR_SECRET"}

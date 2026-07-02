@@ -1,0 +1,76 @@
+# Emergency Close All Workflow
+# Circuit breaker: Closes all positions across all venues
+version: "1.0"
+
+workflow:
+  id: emergency-close-all-v1
+  name: Emergency Close All Positions
+  description: Circuit breaker - closes everything immediately
+  version: "1.0.0"
+  tenant_id: alpha-trader
+  required_tiers: [T4]
+  success_criteria: All positions closed, no open risk
+  phases_used: [Observe, Execute, Verify]
+
+  nodes:
+    - id: fetch-all-positions
+      name: Fetch All Positions
+      phase: Observe
+      skill_id: get_all_positions
+      description: Query all venues for open positions
+      inputs: []
+      outputs: [all_positions]
+      tools: [get_all_positions]
+
+    - id: close-api-positions
+      name: Close API Positions
+      phase: Execute
+      skill_id: emergency_close
+      description: Close positions via API (OANDA, Schwab)
+      inputs: [all_positions]
+      outputs: [api_close_results]
+      tools: [emergency_close]
+
+    - id: close-browser-positions
+      name: Close Browser Positions
+      phase: Execute
+      skill_id: propfirm_place_order
+      description: Close positions via browser (prop firms)
+      inputs: [all_positions]
+      outputs: [browser_close_results]
+      tools: [propfirm_place_order]
+
+    - id: close-desktop-positions
+      name: Close Desktop Positions
+      phase: Execute
+      skill_id: tos_flatten_all
+      description: Flatten all via TOS desktop
+      inputs: [all_positions]
+      outputs: [desktop_close_results]
+      tools: [tos_flatten_all]
+
+    - id: verify-all-closed
+      name: Verify All Closed
+      phase: Verify
+      skill_id: get_all_positions
+      description: Confirm no positions remain
+      inputs: []
+      outputs: [verification_positions]
+      tools: [get_all_positions]
+
+    - id: notify-emergency
+      name: Notify Emergency Close
+      phase: Verify
+      skill_id: send_alert
+      description: Alert user of emergency close
+      inputs: [api_close_results, browser_close_results, desktop_close_results]
+      outputs: [notification_sent]
+      tools: [send_alert]
+      parameters: { severity: "critical" }
+
+  edges:
+    - { from: fetch-all-positions, to: close-api-positions }
+    - { from: close-api-positions, to: close-browser-positions }
+    - { from: close-browser-positions, to: close-desktop-positions }
+    - { from: close-desktop-positions, to: verify-all-closed }
+    - { from: verify-all-closed, to: notify-emergency }

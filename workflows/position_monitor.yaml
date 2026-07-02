@@ -1,0 +1,50 @@
+# Position Monitor Workflow
+# Monitors open positions and closes them based on rules
+version: "1.0"
+
+workflow:
+  id: position-monitor-v1
+  name: Position Monitor
+  description: Monitor open positions on prop firm accounts
+  version: "1.0.0"
+  tenant_id: alpha-trader
+  required_tiers: [T0, T1, T2, T3, T4]
+  
+  nodes:
+    - id: get-positions
+      name: Get Open Positions
+      phase: Observe
+      skill_id: get_positions_direct
+      description: Read current open positions from TopstepX
+      inputs: []
+      outputs: [positions]
+      tools: [get_positions_direct]
+      parameters:
+        platform: "topstep"
+      constraints:
+        time_budget: 60
+        
+    - id: evaluate-positions
+      name: Evaluate Positions
+      phase: Think
+      skill_id: evaluate_positions
+      description: Decide if any positions should be closed
+      inputs: [positions]
+      outputs: [close_decisions]
+      tools: [evaluate_positions]
+      parameters: {}
+      
+    - id: close-positions
+      name: Close Positions
+      phase: Execute
+      skill_id: close_position_direct
+      description: Close positions that hit targets or stops
+      inputs: [close_decisions]
+      outputs: [close_results]
+      tools: [close_position_direct]
+      constraints:
+        time_budget: 60
+        
+  edges:
+    - { from: get-positions, to: evaluate-positions }
+    - { from: evaluate-positions, to: close-positions, condition: "close_decisions.should_close == true" }

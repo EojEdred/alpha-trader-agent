@@ -1,0 +1,71 @@
+//@version=5
+strategy("AlphaTrader - Opening Range Breakout", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// === INPUTS ===
+orMinutes = input.int(15, "Opening Range Minutes", minval=5, maxval=60)
+volumeMult = input.float(1.5, "Volume Multiplier", step=0.1)
+
+// === OPENING RANGE CALCULATION ===
+var float orHigh = na
+var float orLow = na
+var bool orSet = false
+
+// Reset at market open (9:30 AM ET = 14:30 UTC)
+isMarketOpen = hour == 14 and minute == 30
+if isMarketOpen
+    orHigh := high
+    orLow := low
+    orSet := false
+
+// Build OR during first N minutes
+inOpeningRange = (hour == 14 and minute >= 30 and minute < 30 + orMinutes) or (hour == 15 and minute < (30 + orMinutes) - 60)
+
+if inOpeningRange
+    orHigh := math.max(orHigh, high)
+    orLow := math.min(orLow, low)
+    orSet := true
+
+orHeight = orHigh - orLow
+
+// === VOLUME ===
+volumeAvg = ta.sma(volume, 20)
+
+// === CONDITIONS ===
+// Only trade after OR is set
+afterOR = orSet and not inOpeningRange
+
+// Long: Break above OR high with volume
+longBreak = afterOR and close > orHigh and close[1] <= orHigh and volume > volumeAvg * volumeMult
+
+// Short: Break below OR low with volume
+shortBreak = afterOR and close < orLow and close[1] >= orLow and volume > volumeAvg * volumeMult
+
+// === ENTRIES ===
+if longBreak
+    strategy.entry("Long", strategy.long, comment="ORB Long")
+
+if shortBreak
+    strategy.entry("Short", strategy.short, comment="ORB Short")
+
+// === EXITS ===
+// Stop: Back inside OR
+if strategy.position_size > 0 and close < orLow
+    strategy.close("Long", comment="ORB Stop")
+
+if strategy.position_size < 0 and close > orHigh
+    strategy.close("Short", comment="ORB Stop")
+
+// Time stop: Close by 3 PM ET
+if strategy.position_size != 0 and hour == 19 and minute == 0
+    strategy.close_all(comment="Time Stop")
+
+// === PLOTS ===
+plot(orSet ? orHigh : na, "OR High", color=color.new(color.green, 0), style=plot.style_linebr, linewidth=2)
+plot(orSet ? orLow : na, "OR Low", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=2)
+
+// === ALERTS ===
+alertcondition(longBreak, "ORB Long", "ORB Long on {{ticker}} @ {{close}}")
+alertcondition(shortBreak, "ORB Short", "ORB Short on {{ticker}} @ {{close}}")
+
+// === WEBHOOK ===
+// {"symbol":"{{ticker}}","side":"{{strategy.order.action}}","price":{{close}},"quantity":1,"strategy":"opening_range_breakout","timeframe":"{{interval}}","passphrase":"YOUR_SECRET"}

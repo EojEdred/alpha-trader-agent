@@ -1,0 +1,121 @@
+# Prop Firm Scalper Workflow
+# Autonomous futures scalping via browser automation
+version: "1.0"
+
+workflow:
+  id: prop-firm-scalper-v1
+  name: Prop Firm Scalper Agent
+  description: Autonomous futures scalping on prop firm accounts
+  version: "1.0.0"
+  tenant_id: alpha-trader
+  required_tiers: [T0, T1, T2, T3, T4]
+  success_criteria: High-probability scalps executed within Combine rules
+  failure_modes:
+    - combine_violation: Abort immediately
+    - browser_error: Switch to signal-only
+  phases_used: [Observe, Think, Plan, Execute, Verify]
+
+  nodes:
+    - id: topstep-consistency-check
+      name: Topstep Consistency Check
+      phase: Observe
+      skill_id: topstep_consistency_enforcer
+      description: Enforce daily profit cap and consistency rules
+      inputs: []
+      outputs: [consistency_status]
+      tools: [topstep_consistency_enforcer]
+      constraints:
+        time_budget: 10
+
+    - id: prop-firm-compliance-check
+      name: Prop Firm Compliance Check
+      phase: Observe
+      skill_id: propfirm_check_compliance
+      description: Verify account is within Combine rules
+      inputs: []
+      outputs: [compliance_status]
+      tools: [propfirm_check_compliance]
+      constraints:
+        time_budget: 30
+
+    - id: fetch-futures-data
+      name: Fetch Futures Data
+      phase: Observe
+      skill_id: fetch_futures_data
+      description: Get NQ/ES/YM OHLCV
+      inputs: []
+      outputs: [ohlcv_data]
+      parameters: { contract: "NQ" }
+
+    - id: calculate-microstructure
+      name: Calculate Microstructure
+      phase: Think
+      skill_id: calculate_technicals
+      description: Technicals from OHLCV
+      inputs: [ohlcv_data]
+      outputs: [technicals]
+      parameters: { indicators: ["rsi_14", "sma_20"] }
+
+    - id: brain-inference
+      name: Brain Scalp Decision
+      phase: Think
+      skill_id: reason_about_setup
+      description: LLM decides on scalp opportunity
+      inputs: [ohlcv_data, technicals, compliance_status]
+      outputs: [scalp_decision]
+      tools: [reason_about_setup]
+      parameters: { symbol: "NQ" }
+
+    - id: risk-governor
+      name: Risk Governor Validation
+      phase: Plan
+      skill_id: risk_governor
+      description: Validate against prop firm rules
+      inputs: [scalp_decision, compliance_status]
+      outputs: [risk_decision]
+      tools: [risk_governor]
+
+    - id: execute-prop-order
+      name: Execute Prop Firm Order
+      phase: Execute
+      skill_id: propfirm_place_order
+      description: Place order via browser agent
+      inputs: [risk_decision, scalp_decision]
+      outputs: [execution_result]
+      tools: [propfirm_place_order]
+      parameters:
+        stop_loss: "{{scalp_decision.stop_loss}}"
+        take_profit: "{{scalp_decision.take_profit}}"
+      constraints:
+        time_budget: 45
+
+    - id: visual-verify-fill
+      name: Visual Verify Fill
+      phase: Verify
+      skill_id: verify_order_visual
+      description: Screenshot confirmation of fill
+      inputs: [execution_result]
+      outputs: [fill_verification]
+      tools: [verify_order_visual]
+      constraints:
+        time_budget: 20
+
+    - id: log-scalp
+      name: Log Scalp Execution
+      phase: Verify
+      skill_id: log_execution
+      description: Record for learning
+      inputs: [scalp_decision, execution_result, fill_verification]
+      outputs: [audit_log]
+      tools: [log_execution]
+
+  edges:
+    - { from: topstep-consistency-check, to: prop-firm-compliance-check, condition: "consistency_status.can_trade == true" }
+    - { from: prop-firm-compliance-check, to: fetch-futures-data }
+    - { from: fetch-futures-data, to: calculate-microstructure }
+    - { from: calculate-microstructure, to: brain-inference }
+    - { from: brain-inference, to: risk-governor }
+    - { from: risk-governor, to: execute-prop-order, condition: "risk_decision.approved == true" }
+    - { from: execute-prop-order, to: visual-verify-fill }
+    - { from: visual-verify-fill, to: log-scalp }
+    - { from: risk-governor, to: log-scalp, condition: "risk_decision.approved == false" }

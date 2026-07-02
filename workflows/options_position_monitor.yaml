@@ -1,0 +1,70 @@
+# Options Position Monitor Workflow
+# Monitors open option positions and executes profit-locking exits
+version: "1.0"
+
+workflow:
+  id: options-position-monitor-v1
+  name: Options Position Monitor
+  description: Profit-locking position monitor for Schwab options
+  version: "1.0.0"
+  tenant_id: alpha-trader
+  required_tiers: [T0, T1, T2, T3, T4]
+
+  nodes:
+    - id: get-schwab-positions
+      name: Get Schwab Positions
+      phase: Observe
+      skill_id: schwab_get_positions
+      description: Read all open positions from Schwab
+      inputs: []
+      outputs: [positions]
+      tools: [schwab_get_positions]
+      constraints:
+        time_budget: 15
+
+    - id: evaluate-profit-locking
+      name: Evaluate Profit Locking
+      phase: Think
+      skill_id: evaluate_profit_locking
+      description: Run profit-locking engine on all option positions
+      inputs: [positions]
+      outputs: [exit_decisions]
+      tools: [evaluate_profit_locking]
+
+    - id: execute-exits
+      name: Execute Exits
+      phase: Execute
+      skill_id: execute_option_exits
+      description: Close positions per profit-locking rules
+      inputs: [exit_decisions]
+      outputs: [exit_results]
+      tools: [execute_option_exits]
+      constraints:
+        time_budget: 30
+
+    - id: verify-exit-fills
+      name: Verify Exit Fills
+      phase: Verify
+      skill_id: schwab_get_order_status
+      description: Confirm exit orders filled
+      inputs: [exit_results]
+      outputs: [fill_verifications]
+      tools: [schwab_get_order_status]
+      constraints:
+        time_budget: 15
+
+    - id: log-exits
+      name: Log Exits
+      phase: Verify
+      skill_id: log_execution
+      description: Record exits for audit
+      inputs: [exit_decisions, exit_results]
+      outputs: [audit_log]
+      tools: [log_execution]
+
+  edges:
+    - { from: get-schwab-positions, to: evaluate-profit-locking }
+    - { from: evaluate-profit-locking, to: execute-exits, condition: "exit_decisions.should_close == true" }
+    - { from: execute-exits, to: verify-exit-fills }
+    - { from: verify-exit-fills, to: log-exits }
+    - { from: evaluate-profit-locking, to: log-exits, condition: "exit_decisions.should_close == false" }

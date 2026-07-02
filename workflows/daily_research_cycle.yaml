@@ -1,0 +1,153 @@
+# Daily Research Cycle - Runs at 4:00 AM ET
+version: "1.0"
+
+workflow:
+  id: daily-research-cycle-v1
+  name: Daily Research Cycle
+  description: Comprehensive daily market research collecting data from all sources
+  version: "1.0.0"
+  tenant_id: alpha-trader
+  required_tiers: [T0, T1, T2]
+  success_criteria: Data from all sources collected, signals generated, report queued
+  failure_modes:
+    - api_timeout: Retry with exponential backoff
+    - data_quality: Flag and continue with available data
+  phases_used: [Observe, Think, Plan]
+
+  nodes:
+    # OBSERVE PHASE
+    - id: fetch-options-data
+      name: Fetch Options Chain Data
+      phase: Observe
+      skill_id: fetch_options_chain
+      description: Collect options chain data for watched symbols
+      inputs: [watchlist]
+      outputs: [options_chain_data, unusual_activity_flags]
+      tools: [fetch_options_chain]
+      constraints:
+        time_budget: 300
+
+    - id: fetch-futures-data
+      name: Fetch Futures Market Data
+      phase: Observe
+      skill_id: fetch_futures_data
+      description: Collect futures data (ES, NQ, CL, GC)
+      inputs: [futures_watchlist]
+      outputs: [futures_data, key_levels]
+      tools: [fetch_futures_data]
+      constraints:
+        time_budget: 180
+
+    - id: fetch-crypto-data
+      name: Fetch Cryptocurrency Data
+      phase: Observe
+      skill_id: fetch_crypto_data
+      description: Collect crypto data via CCXT
+      inputs: [crypto_watchlist]
+      outputs: [crypto_data, funding_rates]
+      tools: [fetch_crypto_data]
+      constraints:
+        time_budget: 240
+
+    - id: fetch-polymarket-data
+      name: Fetch Prediction Market Data
+      phase: Observe
+      skill_id: fetch_polymarket
+      description: Collect prediction market data from Polymarket
+      inputs: [polymarket_watchlist]
+      outputs: [prediction_market_data]
+      tools: [fetch_polymarket]
+      constraints:
+        time_budget: 120
+
+    - id: fetch-news-sentiment
+      name: Fetch News and Sentiment
+      phase: Observe
+      skill_id: fetch_news
+      description: Collect overnight news and sentiment
+      inputs: [news_sources]
+      outputs: [news_data, sentiment_scores]
+      tools: [fetch_news, fetch_sentiment]
+      constraints:
+        time_budget: 180
+
+    # THINK PHASE
+    - id: analyze-technicals
+      name: Technical Analysis
+      phase: Think
+      skill_id: calculate_technicals
+      description: Run technical indicators on price data
+      inputs: [options_chain_data, futures_data, crypto_data]
+      outputs: [technical_signals]
+      tools: [calculate_technicals]
+      constraints:
+        time_budget: 120
+
+    - id: analyze-options-flow
+      name: Options Flow Analysis
+      phase: Think
+      skill_id: analyze_options_greeks
+      description: Analyze options positioning and flow
+      inputs: [options_chain_data, unusual_activity_flags]
+      outputs: [options_flow_signals]
+      tools: [analyze_options_greeks]
+      constraints:
+        time_budget: 120
+
+    - id: analyze-sentiment
+      name: Sentiment Analysis
+      phase: Think
+      skill_id: evaluate_sentiment
+      description: Synthesize sentiment across sources
+      inputs: [news_data, sentiment_scores, prediction_market_data]
+      outputs: [composite_sentiment]
+      tools: [evaluate_sentiment]
+      constraints:
+        time_budget: 90
+
+    - id: detect-patterns
+      name: Pattern Detection
+      phase: Think
+      skill_id: detect_patterns
+      description: Identify actionable patterns
+      inputs: [technical_signals, options_flow_signals, composite_sentiment]
+      outputs: [pattern_signals]
+      tools: [detect_patterns]
+      constraints:
+        time_budget: 150
+
+    # PLAN PHASE
+    - id: generate-trade-ideas
+      name: Generate Trade Ideas
+      phase: Plan
+      skill_id: generate_trade_idea
+      description: Create specific trade recommendations
+      inputs: [technical_signals, options_flow_signals, composite_sentiment, pattern_signals]
+      outputs: [trade_recommendations]
+      tools: [generate_trade_idea, calculate_position_size]
+      constraints:
+        time_budget: 180
+
+    - id: queue-morning-report
+      name: Queue Morning Report
+      phase: Plan
+      skill_id: generate_report
+      description: Compile findings into morning report
+      inputs: [trade_recommendations, technical_signals, composite_sentiment]
+      outputs: [morning_report]
+      tools: [generate_report]
+      constraints:
+        time_budget: 120
+
+  edges:
+    - { from: fetch-options-data, to: analyze-technicals }
+    - { from: fetch-options-data, to: analyze-options-flow }
+    - { from: fetch-futures-data, to: analyze-technicals }
+    - { from: fetch-crypto-data, to: analyze-technicals }
+    - { from: fetch-polymarket-data, to: analyze-sentiment }
+    - { from: fetch-news-sentiment, to: analyze-sentiment }
+    - { from: analyze-technicals, to: detect-patterns }
+    - { from: analyze-options-flow, to: detect-patterns }
+    - { from: analyze-sentiment, to: detect-patterns }
+    - { from: detect-patterns, to: generate-trade-ideas }
+    - { from: generate-trade-ideas, to: queue-morning-report }

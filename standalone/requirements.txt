@@ -1,0 +1,60 @@
+# Alpha Trader Dependencies
+
+# Core
+pyyaml>=6.0
+pydantic>=2.0
+python-dotenv>=1.0
+
+# Async
+aiohttp>=3.9
+aiosqlite>=0.19
+
+# Scheduling
+apscheduler>=3.10
+
+# Market Data
+ccxt>=4.0
+yfinance>=0.2
+polygon-api-client>=1.12
+
+# Analysis
+pandas>=2.0
+numpy>=1.24
+ta>=0.10.2
+scipy>=1.11
+
+# ML/LLM
+openai>=1.0
+anthropic>=0.8
+
+# Broker APIs
+ib_insync>=0.9
+
+# Notifications
+twilio>=8.0
+sendgrid>=6.0
+
+# NEW - Dexter additions
+typer>=0.9.0
+rich>=13.0
+textual>=0.40
+
+# NEW - Research
+trafilatura>=1.6
+llama-index>=0.10
+
+# NEW - Options analytics
+py_vollib>=1.0.1
+
+# NEW - Backtesting
+vectorbt>=0.26
+
+# NEW - Execution adapters
+oandapyV20>=0.6.3
+aiokalshi>=0.1
+py-clob-client>=0.1
+schwab-py>=0.1
+
+# Utilities
+pytz>=2023.3
+loguru>=0.7

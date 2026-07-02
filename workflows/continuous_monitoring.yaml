@@ -1,0 +1,102 @@
+# Continuous Monitoring - Every 5 min during market hours
+version: "1.0"
+
+workflow:
+  id: continuous-monitoring-v1
+  name: Continuous Position Monitoring
+  description: Monitors positions for stops and alerts
+  version: "1.0.0"
+  tenant_id: alpha-trader
+  required_tiers: [T0, T1, T2, T3, T4]
+  success_criteria: All positions checked, stops evaluated
+  failure_modes:
+    - position_query_failed: Retry immediately
+    - stop_execution_failed: Emergency escalation
+  phases_used: [Observe, Verify, Execute]
+
+  nodes:
+    - id: fetch-positions
+      name: Fetch Current Positions
+      phase: Observe
+      skill_id: get_positions
+      description: Query all open positions
+      inputs: []
+      outputs: [current_positions]
+      tools: [get_positions]
+      constraints:
+        time_budget: 15
+
+    - id: fetch-prices
+      name: Fetch Current Prices
+      phase: Observe
+      skill_id: fetch_prices
+      description: Get current prices for positions
+      inputs: [current_positions]
+      outputs: [current_prices]
+      tools: [fetch_prices]
+      constraints:
+        time_budget: 15
+
+    - id: evaluate-stops
+      name: Evaluate Stop Conditions
+      phase: Verify
+      skill_id: evaluate_stops
+      description: Check positions against stop conditions
+      inputs: [current_positions, current_prices]
+      outputs: [stop_triggers]
+      tools: [evaluate_stops]
+      constraints:
+        time_budget: 15
+
+    - id: evaluate-alerts
+      name: Evaluate Price Alerts
+      phase: Verify
+      skill_id: evaluate_alerts
+      description: Check price alert conditions
+      inputs: [current_prices, alert_config]
+      outputs: [triggered_alerts]
+      tools: [evaluate_alerts]
+      constraints:
+        time_budget: 15
+
+    - id: execute-stops
+      name: Execute Stop Orders
+      phase: Execute
+      skill_id: emergency_close
+      description: Execute triggered stops (T4 - no confirmation)
+      inputs: [stop_triggers]
+      outputs: [stop_execution_results]
+      tools: [emergency_close]
+      constraints:
+        time_budget: 60
+
+    - id: send-alerts
+      name: Send Alert Notifications
+      phase: Execute
+      skill_id: send_alert
+      description: Notify of triggered alerts
+      inputs: [triggered_alerts]
+      outputs: [alert_delivery_status]
+      tools: [send_alert]
+      constraints:
+        time_budget: 30
+
+    - id: log-monitoring
+      name: Log Monitoring Cycle
+      phase: Verify
+      skill_id: log_execution
+      description: Record monitoring results
+      inputs: [stop_execution_results, alert_delivery_status]
+      outputs: [monitoring_log]
+      tools: [log_execution]
+      constraints:
+        time_budget: 15
+
+  edges:
+    - { from: fetch-positions, to: fetch-prices }
+    - { from: fetch-prices, to: evaluate-stops }
+    - { from: fetch-prices, to: evaluate-alerts }
+    - { from: evaluate-stops, to: execute-stops, condition: "stop_triggers.length > 0" }
+    - { from: evaluate-alerts, to: send-alerts, condition: "triggered_alerts.length > 0" }
+    - { from: execute-stops, to: log-monitoring }
+    - { from: send-alerts, to: log-monitoring }

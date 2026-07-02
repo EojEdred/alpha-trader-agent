@@ -1,0 +1,1222 @@
+# Alpha Trader Tool Registry
+version: "1.0"
+tenant_id: alpha-trader
+
+tools:
+  # MARKET DATA (T1-T2)
+  - id: fetch_options_chain
+    name: Fetch Options Chain
+    tier: T2
+    category: market_data
+    provider: interactive_brokers
+    rate_limit: { requests_per_minute: 30 }
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: expiration_range_days, type: integer, default: 60 }
+    implementation:
+      standalone: tools.market_data::fetch_options_chain
+
+  - id: fetch_futures_data
+    name: Fetch Futures Data
+    tier: T2
+    category: market_data
+    provider: ninjatrader
+    rate_limit: { requests_per_minute: 60 }
+    parameters:
+      - { name: contract, type: string, required: true }
+    implementation:
+      standalone: tools.market_data::fetch_futures_data
+
+  - id: fetch_crypto_data
+    name: Fetch Cryptocurrency Data
+    tier: T1
+    category: market_data
+    provider: ccxt
+    rate_limit: { requests_per_minute: 1200 }
+    parameters:
+      - { name: exchange, type: string, required: true }
+      - { name: symbol, type: string, required: true }
+      - { name: timeframe, type: string, default: "1h" }
+    implementation:
+      standalone: tools.market_data::fetch_crypto_data
+
+  - id: fetch_polymarket
+    name: Fetch Polymarket Data
+    tier: T1
+    category: market_data
+    provider: polymarket
+    rate_limit: { requests_per_minute: 100 }
+    parameters:
+      - { name: market_id, type: string, required: false }
+      - { name: active_only, type: boolean, default: true }
+    implementation:
+      standalone: tools.market_data::fetch_polymarket
+
+  - id: fetch_news
+    name: Fetch News
+    tier: T1
+    category: market_data
+    provider: newsapi
+    rate_limit: { requests_per_day: 100 }
+    parameters:
+      - { name: symbols, type: array, required: false }
+      - { name: hours_back, type: integer, default: 24 }
+    implementation:
+      standalone: tools.market_data::fetch_news
+
+  # ANALYSIS (T0-T1)
+  - id: calculate_technicals
+    name: Calculate Technical Indicators
+    tier: T0
+    category: analysis
+    provider: local
+    stateless: true
+    parameters:
+      - { name: ohlcv_data, type: array, required: true }
+      - { name: indicators, type: array, default: ["sma_20", "rsi_14", "macd"] }
+    implementation:
+      standalone: tools.analysis::calculate_technicals
+
+  - id: analyze_options_greeks
+    name: Analyze Options Greeks
+    tier: T0
+    category: analysis
+    provider: local
+    stateless: true
+    parameters:
+      - { name: options_chain, type: object, required: true }
+    implementation:
+      standalone: tools.analysis::analyze_options_greeks
+
+  - id: evaluate_sentiment
+    name: Evaluate Sentiment
+    tier: T1
+    category: analysis
+    provider: llm
+    parameters:
+      - { name: texts, type: array, required: true }
+    implementation:
+      standalone: tools.analysis::evaluate_sentiment
+
+  - id: detect_patterns
+    name: Detect Chart Patterns
+    tier: T0
+    category: analysis
+    provider: local
+    stateless: true
+    parameters:
+      - { name: ohlcv_data, type: array, required: true }
+    implementation:
+      standalone: tools.analysis::detect_patterns
+
+  - id: map_session_liquidity
+    name: Map Session Liquidity
+    tier: T0
+    category: analysis
+    provider: local
+    stateless: true
+    parameters:
+      - { name: ohlcv_data, type: array, required: true }
+    implementation:
+      standalone: tools.analysis::map_session_liquidity
+
+  # STRATEGY (T1-T2)
+  - id: generate_trade_idea
+    name: Generate Trade Idea
+    tier: T1
+    category: strategy
+    provider: llm
+    parameters:
+      - { name: signals, type: object, required: true }
+      - { name: risk_params, type: object, required: true }
+    implementation:
+      standalone: tools.strategy::generate_trade_idea
+
+  - id: calculate_position_size
+    name: Calculate Position Size
+    tier: T0
+    category: strategy
+    provider: local
+    stateless: true
+    parameters:
+      - { name: account_value, type: number, required: true }
+      - { name: risk_per_trade_pct, type: number, default: 1.0 }
+      - { name: stop_distance, type: number, required: true }
+    implementation:
+      standalone: tools.strategy::calculate_position_size
+
+  - id: evaluate_portfolio_risk
+    name: Evaluate Portfolio Risk
+    tier: T1
+    category: strategy
+    provider: local
+    parameters:
+      - { name: positions, type: array, required: true }
+      - { name: proposed_trade, type: object, required: false }
+    implementation:
+      standalone: tools.strategy::evaluate_portfolio_risk
+
+  # EXECUTION (T3-T4)
+  - id: submit_order
+    name: Submit Order
+    tier: T3
+    category: execution
+    provider: interactive_brokers
+    requires_confirmation: true
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: side, type: string, enum: [buy, sell], required: true }
+      - { name: quantity, type: integer, required: true }
+      - { name: order_type, type: string, default: limit }
+      - { name: limit_price, type: number, required: false }
+    implementation:
+      standalone: tools.execution::submit_order
+
+  - id: modify_order
+    name: Modify Order
+    tier: T3
+    category: execution
+    provider: interactive_brokers
+    parameters:
+      - { name: order_id, type: string, required: true }
+      - { name: new_limit_price, type: number, required: false }
+    implementation:
+      standalone: tools.execution::modify_order
+
+  - id: cancel_order
+    name: Cancel Order
+    tier: T3
+    category: execution
+    provider: interactive_brokers
+    parameters:
+      - { name: order_id, type: string, required: true }
+    implementation:
+      standalone: tools.execution::cancel_order
+
+  - id: emergency_close
+    name: Emergency Position Close
+    tier: T4
+    category: execution
+    provider: interactive_brokers
+    requires_confirmation: false
+    circuit_breaker: true
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: reason, type: string, required: true }
+    implementation:
+      standalone: tools.execution::emergency_close
+
+  - id: get_positions
+    name: Get Positions
+    tier: T2
+    category: execution
+    provider: interactive_brokers
+    parameters: []
+    implementation:
+      standalone: tools.execution::get_positions
+
+  - id: get_order_status
+    name: Get Order Status
+    tier: T2
+    category: execution
+    provider: interactive_brokers
+    parameters:
+      - { name: order_id, type: string, required: true }
+    implementation:
+      standalone: tools.execution::get_order_status
+
+  # REPORTING (T0-T1)
+  - id: generate_report
+    name: Generate Report
+    tier: T0
+    category: reporting
+    provider: local
+    parameters:
+      - { name: report_data, type: object, required: true }
+      - { name: format, type: string, default: markdown }
+    implementation:
+      standalone: tools.reporting::generate_report
+
+  - id: log_execution
+    name: Log Execution
+    tier: T0
+    category: reporting
+    provider: local
+    parameters:
+      - { name: action, type: string, required: true }
+      - { name: details, type: object, required: true }
+    implementation:
+      standalone: tools.reporting::log_execution
+
+  - id: calculate_pnl
+    name: Calculate P&L
+    tier: T0
+    category: reporting
+    provider: local
+    stateless: true
+    parameters:
+      - { name: positions, type: array, required: true }
+      - { name: current_prices, type: object, required: true }
+    implementation:
+      standalone: tools.reporting::calculate_pnl
+
+  # DELIVERY (T1)
+  - id: send_email
+    name: Send Email
+    tier: T1
+    category: delivery
+    provider: smtp
+    rate_limit: { requests_per_hour: 50 }
+    parameters:
+      - { name: to, type: string, required: true }
+      - { name: subject, type: string, required: true }
+      - { name: body, type: string, required: true }
+    implementation:
+      standalone: tools.delivery::send_email
+
+  - id: send_sms
+    name: Send SMS
+    tier: T1
+    category: delivery
+    provider: twilio
+    rate_limit: { requests_per_minute: 10 }
+    parameters:
+      - { name: to, type: string, required: true }
+      - { name: message, type: string, required: true }
+    implementation:
+      standalone: tools.delivery::send_sms
+
+  - id: send_telegram
+    name: Send Telegram Message
+    tier: T1
+    category: delivery
+    provider: telegram
+    parameters:
+      - { name: message, type: string, required: true }
+    implementation:
+      standalone: tools.delivery::send_telegram
+
+  - id: send_alert
+    name: Send Alert
+    tier: T1
+    category: delivery
+    provider: multi
+    parameters:
+      - { name: message, type: string, required: true }
+      - { name: severity, type: string, default: warning }
+    implementation:
+      standalone: tools.delivery::send_alert
+
+  # DEXTER TOOLS (Volume Profile, Order Flow, Scoring, Arbitrage)
+  - id: calculate_profile_for_symbol
+    name: Calculate Volume Profile for Symbol
+    tier: T0
+    category: analysis
+    provider: local
+    stateless: true
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: timeframe, type: string, default: "1h" }
+      - { name: lookback_bars, type: integer, default: 50 }
+    implementation:
+      standalone: tools.volume_profile::calculate_profile_for_symbol
+
+  - id: get_trade_location
+    name: Get Trade Location
+    tier: T0
+    category: analysis
+    provider: local
+    stateless: true
+    parameters:
+      - { name: current_price, type: number, required: true }
+      - { name: profile, type: object, required: true }
+    implementation:
+      standalone: tools.volume_profile::get_trade_location
+
+  - id: get_order_flow_signals
+    name: Get Order Flow Signals
+    tier: T0
+    category: analysis
+    provider: local
+    stateless: true
+    parameters: []
+    implementation:
+      standalone: tools.order_flow::get_order_flow_signals
+
+  - id: score_setup
+    name: Score Trading Setup
+    tier: T0
+    category: analysis
+    provider: local
+    stateless: true
+    parameters:
+      - { name: symbol, type: string, required: true }
+    implementation:
+      standalone: tools.scoring::score_setup
+
+  - id: create_trade_object
+    name: Create Trade Object
+    tier: T0
+    category: analysis
+    provider: local
+    stateless: true
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: direction, type: string, required: true }
+      - { name: score, type: object, required: true }
+      - { name: profile_data, type: object, required: true }
+      - { name: entry_price, type: number, required: true }
+    implementation:
+      standalone: tools.scoring::create_trade_object
+
+  - id: scan_arbitrage
+    name: Scan for Arbitrage Opportunities
+    tier: T1
+    category: analysis
+    provider: local
+    parameters:
+      - { name: min_spread_pct, type: number, default: 1.0 }
+      - { name: max_results, type: integer, default: 10 }
+    implementation:
+      standalone: tools.arbitrage::scan_arbitrage
+
+  - id: execute_arbitrage
+    name: Execute Arbitrage Trade
+    tier: T3
+    category: execution
+    provider: local
+    requires_confirmation: true
+    parameters:
+      - { name: opportunity, type: object, required: true }
+      - { name: size, type: number, required: true }
+    implementation:
+      standalone: tools.arbitrage::execute_arbitrage
+
+  - id: submit_trade
+    name: Submit Trade
+    tier: T3
+    category: execution
+    provider: multi
+    requires_confirmation: true
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: direction, type: string, required: true }
+      - { name: size, type: number, required: false }
+      - { name: venue, type: string, default: "auto" }
+    implementation:
+      standalone: tools.execution::submit_trade
+
+  - id: get_all_positions
+    name: Get All Positions
+    tier: T2
+    category: execution
+    provider: multi
+    parameters: []
+    implementation:
+      standalone: tools.execution::get_all_positions
+
+  - id: calculate_pnl_summary
+    name: Calculate P&L Summary
+    tier: T0
+    category: reporting
+    provider: local
+    stateless: true
+    parameters:
+      - { name: period, type: string, default: "today" }
+    implementation:
+      standalone: tools.reporting::calculate_pnl_summary
+
+  - id: fetch_current_price
+    name: Fetch Current Price
+    tier: T1
+    category: market_data
+    provider: multi
+    parameters:
+      - { name: symbol, type: string, required: true }
+    implementation:
+      standalone: tools.market_data::fetch_current_price
+
+  - id: fetch_ohlcv
+    name: Fetch OHLCV Data
+    tier: T1
+    category: market_data
+    provider: multi
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: timeframe, type: string, default: "1h" }
+      - { name: limit, type: integer, default: 50 }
+    implementation:
+      standalone: tools.market_data::fetch_ohlcv
+
+  # OANDA TOOLS
+  - id: oanda_get_price
+    name: Get OANDA Price
+    tier: T2
+    category: market_data
+    provider: oanda
+    parameters:
+      - { name: instrument, type: string, default: "XAU_USD" }
+    implementation:
+      standalone: tools.oanda::oanda_get_price
+
+  - id: oanda_place_order
+    name: Place OANDA Order
+    tier: T3
+    category: execution
+    provider: oanda
+    requires_confirmation: true
+    parameters:
+      - { name: instrument, type: string, required: true }
+      - { name: units, type: integer, required: true }
+      - { name: side, type: string, required: true }
+      - { name: order_type, type: string, default: "MARKET" }
+    implementation:
+      standalone: tools.oanda::oanda_place_order
+
+  - id: oanda_get_positions
+    name: Get OANDA Positions
+    tier: T2
+    category: execution
+    provider: oanda
+    parameters: []
+    implementation:
+      standalone: tools.oanda::oanda_get_positions
+
+  # KALSHI TOOLS
+  - id: fetch_kalshi_markets
+    name: Fetch Kalshi Markets
+    tier: T1
+    category: market_data
+    provider: kalshi
+    parameters: []
+    implementation:
+      standalone: tools.kalshi::fetch_kalshi_markets
+
+  - id: kalshi_place_order
+    name: Place Kalshi Order
+    tier: T3
+    category: execution
+    provider: kalshi
+    requires_confirmation: true
+    parameters:
+      - { name: ticker, type: string, required: true }
+      - { name: side, type: string, required: true }
+      - { name: size, type: integer, required: true }
+      - { name: price, type: number, required: true }
+    implementation:
+      standalone: tools.kalshi::place_order
+
+  - id: kalshi_get_positions
+    name: Get Kalshi Positions
+    tier: T2
+    category: execution
+    provider: kalshi
+    parameters: []
+    implementation:
+      standalone: tools.kalshi::kalshi_get_positions
+
+  # TOPSTEP TOOLS
+  - id: topstep_get_price
+    name: Get Topstep Price
+    tier: T2
+    category: market_data
+    provider: topstep
+    parameters:
+      - { name: symbol, type: string, required: true }
+    implementation:
+      standalone: tools.topstep::topstep_get_price
+
+  - id: topstep_place_order
+    name: Place Topstep Order
+    tier: T3
+    category: execution
+    provider: topstep
+    requires_confirmation: true
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: quantity, type: integer, required: true }
+      - { name: side, type: string, required: true }
+    implementation:
+      standalone: tools.topstep::topstep_place_order
+
+  - id: topstep_get_positions
+    name: Get Topstep Positions
+    tier: T2
+    category: execution
+    provider: topstep
+    parameters: []
+    implementation:
+      standalone: tools.topstep::topstep_get_positions
+
+  - id: topstep_check_compliance
+    name: Check Topstep Combine Compliance
+    tier: T1
+    category: strategy
+    provider: topstep
+    parameters: []
+    implementation:
+      standalone: tools.topstep::topstep_check_compliance
+
+  # POLYMARKET TOOLS
+  - id: polymarket_place_order
+    name: Place Polymarket Order
+    tier: T3
+    category: execution
+    provider: polymarket
+    requires_confirmation: true
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: side, type: string, required: true }
+      - { name: size, type: number, required: true }
+      - { name: price, type: number, required: true }
+    implementation:
+      standalone: tools.polymarket::place_order
+
+  - id: evaluate_alerts
+    name: Evaluate Price Alerts
+    tier: T1
+    category: analysis
+    provider: local
+    implementation:
+      standalone: tools.execution::evaluate_alerts
+
+  - id: check_pdt_compliance
+    name: Check PDT Compliance
+    tier: T1
+    category: strategy
+    provider: local
+    implementation:
+      standalone: tools.strategy::check_pdt_compliance
+
+  - id: select_best_trade
+    name: Select Best Trade
+    tier: T2
+    category: strategy
+    provider: local
+    implementation:
+      standalone: tools.strategy::select_best_trade
+
+  - id: strategy_filter
+    name: Strategy Filter
+    tier: T2
+    category: strategy
+    provider: local
+    implementation:
+      standalone: tools.strategy::strategy_filter
+
+  - id: reason_about_setup
+    name: Reason About Setup
+    tier: T3
+    category: strategy
+    provider: llm
+    implementation:
+      standalone: tools.brain::reason_about_setup
+
+  - id: deep_research_critique
+    name: Deep Research Critique
+    tier: T3
+    category: strategy
+    provider: llm
+    implementation:
+      standalone: tools.brain::deep_research_critique
+
+  - id: self_reflect
+    name: Self Reflect
+    tier: T2
+    category: strategy
+    provider: llm
+    implementation:
+      standalone: tools.brain::self_reflect
+
+  - id: inspect_dom
+    name: Inspect DOM
+    tier: T1
+    category: browser
+    provider: local
+    implementation:
+      standalone: tools.dom_inspector::inspect_platform
+
+  - id: get_positions_direct
+    name: Get Positions Direct
+    tier: T1
+    category: browser
+    provider: local
+    implementation:
+      standalone: tools.browser_agents.propfirm_agent::get_positions_direct
+
+  - id: close_position_direct
+    name: Close Position Direct
+    tier: T1
+    category: browser
+    provider: local
+    implementation:
+      standalone: tools.browser_agents.propfirm_agent::close_position_direct
+
+  - id: evaluate_positions
+    name: Evaluate Positions
+    tier: T1
+    category: strategy
+    provider: local
+    implementation:
+      standalone: tools.browser_agents.propfirm_agent::evaluate_positions
+
+  # PRIZEPICKS TOOLS
+  - id: prizepicks_get_projections
+    name: Get PrizePicks Projections
+    tier: T1
+    category: market_data
+    provider: prizepicks
+    parameters:
+      - { name: league_ids, type: array, required: false }
+    implementation:
+      standalone: tools.prizepicks::prizepicks_get_projections
+
+  - id: prizepicks_get_leagues
+    name: Get PrizePicks Leagues
+    tier: T1
+    category: market_data
+    provider: prizepicks
+    parameters: []
+    implementation:
+      standalone: tools.prizepicks::prizepicks_get_leagues
+
+  - id: prizepicks_get_contests
+    name: Get PrizePicks Contests
+    tier: T1
+    category: market_data
+    provider: prizepicks
+    parameters: []
+    implementation:
+      standalone: tools.prizepicks::prizepicks_get_contests
+
+  - id: prizepicks_place_entry
+    name: Place PrizePicks Entry
+    tier: T3
+    category: execution
+    provider: prizepicks
+    requires_confirmation: true
+    parameters:
+      - { name: contest_id, type: string, required: true }
+      - { name: player_selections, type: array, required: true }
+    implementation:
+      standalone: tools.prizepicks::prizepicks_place_entry
+
+  - id: prizepicks_get_positions
+    name: Get PrizePicks Positions
+    tier: T2
+    category: execution
+    provider: prizepicks
+    parameters: []
+    implementation:
+      standalone: tools.prizepicks::prizepicks_get_positions
+
+  # BETMGM TOOLS
+  - id: betmgm_get_sports
+    name: Get BetMGM Sports
+    tier: T1
+    category: market_data
+    provider: betmgm
+    parameters: []
+    implementation:
+      standalone: tools.betmgm::betmgm_get_sports
+
+  - id: betmgm_get_events
+    name: Get BetMGM Events
+    tier: T1
+    category: market_data
+    provider: betmgm
+    parameters:
+      - { name: sport_id, type: string, required: true }
+    implementation:
+      standalone: tools.betmgm::betmgm_get_events
+
+  - id: betmgm_get_markets
+    name: Get BetMGM Markets
+    tier: T1
+    category: market_data
+    provider: betmgm
+    parameters:
+      - { name: event_id, type: string, required: true }
+    implementation:
+      standalone: tools.betmgm::betmgm_get_markets
+
+  - id: betmgm_place_bet
+    name: Place BetMGM Bet
+    tier: T3
+    category: execution
+    provider: betmgm
+    requires_confirmation: true
+    parameters:
+      - { name: bet_data, type: object, required: true }
+    implementation:
+      standalone: tools.betmgm::betmgm_place_bet
+
+  - id: betmgm_get_positions
+    name: Get BetMGM Positions
+    tier: T2
+    category: execution
+    provider: betmgm
+    parameters: []
+    implementation:
+      standalone: tools.betmgm::betmgm_get_positions
+
+  # FANDUEL TOOLS
+  - id: fanduel_get_sports
+    name: Get FanDuel Sports
+    tier: T1
+    category: market_data
+    provider: fanduel
+    parameters: []
+    implementation:
+      standalone: tools.fanduel::fanduel_get_sports
+
+  - id: fanduel_get_events
+    name: Get FanDuel Events
+    tier: T1
+    category: market_data
+    provider: fanduel
+    parameters:
+      - { name: sport_id, type: string, required: true }
+    implementation:
+      standalone: tools.fanduel::fanduel_get_events
+
+  - id: fanduel_get_markets
+    name: Get FanDuel Markets
+    tier: T1
+    category: market_data
+    provider: fanduel
+    parameters:
+      - { name: event_id, type: string, required: true }
+    implementation:
+      standalone: tools.fanduel::fanduel_get_markets
+
+  - id: fanduel_place_bet
+    name: Place FanDuel Bet
+    tier: T3
+    category: execution
+    provider: fanduel
+    requires_confirmation: true
+    parameters:
+      - { name: bet_data, type: object, required: true }
+    implementation:
+      standalone: tools.fanduel::fanduel_place_bet
+
+  - id: fanduel_get_positions
+    name: Get FanDuel Positions
+    tier: T2
+    category: execution
+    provider: fanduel
+    parameters: []
+    implementation:
+      standalone: tools.fanduel::fanduel_get_positions
+
+  # PANDA FOREX TOOLS
+  - id: pandafx_get_pairs
+    name: Get PandaFX Currency Pairs
+    tier: T1
+    category: market_data
+    provider: pandafx
+    parameters: []
+    implementation:
+      standalone: tools.pandafx::pandafx_get_pairs
+
+  - id: pandafx_get_quotes
+    name: Get PandaFX Quotes
+    tier: T1
+    category: market_data
+    provider: pandafx
+    parameters:
+      - { name: symbols, type: array, required: false }
+    implementation:
+      standalone: tools.pandafx::pandafx_get_quotes
+
+  - id: pandafx_place_trade
+    name: Place PandaFX Trade
+    tier: T3
+    category: execution
+    provider: pandafx
+    requires_confirmation: true
+    parameters:
+      - { name: pair, type: string, required: true }
+      - { name: side, type: string, enum: [buy, sell], required: true }
+      - { name: amount, type: number, required: true }
+      - { name: order_type, type: string, default: MARKET }
+      - { name: price, type: number, required: false }
+    implementation:
+      standalone: tools.pandafx::pandafx_place_trade
+
+  - id: pandafx_get_positions
+    name: Get PandaFX Positions
+    tier: T2
+    category: execution
+    provider: pandafx
+    parameters: []
+    implementation:
+      standalone: tools.pandafx::pandafx_get_positions
+
+  - id: pandafx_get_account_info
+    name: Get PandaFX Account Info
+    tier: T2
+    category: execution
+    provider: pandafx
+    parameters: []
+    implementation:
+      standalone: tools.pandafx::pandafx_get_account_info
+
+  # APEX FUTURES TOOLS
+  - id: apexfutures_get_contracts
+    name: Get ApexFutures Contracts
+    tier: T1
+    category: market_data
+    provider: apexfutures
+    parameters: []
+    implementation:
+      standalone: tools.apexfutures::apexfutures_get_contracts
+
+  - id: apexfutures_get_quotes
+    name: Get ApexFutures Quotes
+    tier: T1
+    category: market_data
+    provider: apexfutures
+    parameters:
+      - { name: symbols, type: array, required: false }
+    implementation:
+      standalone: tools.apexfutures::apexfutures_get_quotes
+
+  - id: apexfutures_place_trade
+    name: Place ApexFutures Trade
+    tier: T3
+    category: execution
+    provider: apexfutures
+    requires_confirmation: true
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: side, type: string, enum: [buy, sell], required: true }
+      - { name: quantity, type: integer, required: true }
+      - { name: order_type, type: string, default: MARKET }
+      - { name: price, type: number, required: false }
+    implementation:
+      standalone: tools.apexfutures::apexfutures_place_trade
+
+  - id: apexfutures_get_positions
+    name: Get ApexFutures Positions
+    tier: T2
+    category: execution
+    provider: apexfutures
+    parameters: []
+    implementation:
+      standalone: tools.apexfutures::apexfutures_get_positions
+
+  - id: apexfutures_get_account_info
+    name: Get ApexFutures Account Info
+    tier: T2
+    category: execution
+    provider: apexfutures
+    parameters: []
+    implementation:
+      standalone: tools.apexfutures::apexfutures_get_account_info
+
+  - id: apexfutures_get_pnl_summary
+    name: Get ApexFutures P&L Summary
+    tier: T0
+    category: reporting
+    provider: apexfutures
+    parameters: []
+    implementation:
+      standalone: tools.apexfutures::apexfutures_get_pnl_summary
+
+  # ─── BROWSER AGENTS (NEW) ───
+  - id: tradingview_browser_scan
+    name: TradingView Browser Scan
+    tier: T2
+    category: execution
+    provider: browser_use
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: timeframe, type: string, default: "1h" }
+    implementation:
+      standalone: tools.browser_agents.tradingview_agent::TradingViewAgent.analyze_chart
+
+  - id: tradingview_place_order
+    name: TradingView Place Order
+    tier: T3
+    category: execution
+    provider: browser_use
+    requires_confirmation: true
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: side, type: string, required: true }
+      - { name: quantity, type: integer, required: true }
+    implementation:
+      standalone: tools.browser_agents.tradingview_agent::TradingViewAgent.place_order
+
+  - id: propfirm_place_order
+    name: Prop Firm Place Order
+    tier: T3
+    category: execution
+    provider: browser_use
+    requires_confirmation: true
+    parameters:
+      - { name: platform, type: string, required: true }
+      - { name: symbol, type: string, required: true }
+      - { name: side, type: string, required: true }
+      - { name: quantity, type: integer, required: true }
+      - { name: stop_loss, type: number, required: false }
+      - { name: take_profit, type: number, required: false }
+    implementation:
+      standalone: tools.browser_agents.propfirm_agent::propfirm_place_order
+
+  - id: propfirm_check_compliance
+    name: Prop Firm Check Compliance
+    tier: T1
+    category: strategy
+    provider: browser_use
+    parameters:
+      - { name: platform, type: string, required: true }
+    implementation:
+      standalone: tools.browser_agents.propfirm_agent::propfirm_check_compliance
+
+  - id: risk_governor
+    name: Risk Governor
+    tier: T1
+    category: risk
+    provider: internal
+    parameters:
+      - { name: scalp_decision, type: dict, required: false }
+      - { name: compliance_status, type: dict, required: false }
+    implementation:
+      standalone: tools.brain::risk_governor
+
+  - id: schwab_web_place_spread
+    name: Schwab Web Place Option Spread
+    tier: T3
+    category: execution
+    provider: browser_use
+    requires_confirmation: true
+    parameters:
+      - { name: underlying, type: string, required: true }
+      - { name: spread_type, type: string, required: true }
+      - { name: legs, type: array, required: true }
+    implementation:
+      standalone: tools.browser_agents.schwab_web_agent::SchwabWebAgent.place_option_spread
+
+  # ─── DESKTOP AGENTS (NEW) ───
+  - id: tos_place_order
+    name: ThinkOrSwim Place Order
+    tier: T3
+    category: execution
+    provider: desktop
+    requires_confirmation: true
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: side, type: string, required: true }
+      - { name: quantity, type: integer, required: true }
+    implementation:
+      standalone: tools.desktop_agents.tos_automation::ThinkOrSwimDesktopAgent.place_order
+
+  - id: tos_flatten_all
+    name: ThinkOrSwim Flatten All
+    tier: T4
+    category: execution
+    provider: desktop
+    requires_confirmation: false
+    circuit_breaker: true
+    parameters: []
+    implementation:
+      standalone: tools.desktop_agents.tos_automation::ThinkOrSwimDesktopAgent.flatten_all
+
+  - id: tradovate_place_order
+    name: Tradovate Place Order
+    tier: T3
+    category: execution
+    provider: desktop
+    requires_confirmation: true
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: side, type: string, required: true }
+      - { name: quantity, type: integer, required: true }
+    implementation:
+      standalone: tools.desktop_agents.tradovate_desktop::TradovateDesktopAgent.place_order
+
+  # ─── VISION / COMPUTER USE (NEW) ───
+  - id: verify_order_visual
+    name: Verify Order Confirmation Visual
+    tier: T2
+    category: execution
+    provider: openai
+    parameters:
+      - { name: screenshot_path, type: string, required: true }
+    implementation:
+      standalone: tools.vision.vision_analyzer::verify_order_visual
+
+  - id: read_account_visual
+    name: Read Account Dashboard Visual
+    tier: T2
+    category: execution
+    provider: openai
+    parameters:
+      - { name: screenshot_path, type: string, required: true }
+    implementation:
+      standalone: tools.vision.vision_analyzer::TradingVisionAnalyzer.read_account_dashboard
+
+  - id: detect_errors_visual
+    name: Detect Errors Visual
+    tier: T1
+    category: execution
+    provider: openai
+    parameters:
+      - { name: screenshot_path, type: string, required: true }
+    implementation:
+      standalone: tools.vision.vision_analyzer::TradingVisionAnalyzer.detect_errors
+
+  # ─── UNIFIED ROUTER (NEW) ───
+  - id: unified_execute_intent
+    name: Unified Execute Intent
+    tier: T3
+    category: execution
+    provider: multi
+    requires_confirmation: true
+    parameters:
+      - { name: intent, type: object, required: true }
+      - { name: risk_decision, type: object, required: true }
+    implementation:
+      standalone: tools.unified_execution_router::UnifiedExecutionRouter.execute_intent
+
+  - id: unified_get_stats
+    name: Unified Router Stats
+    tier: T0
+    category: reporting
+    provider: local
+    parameters: []
+    implementation:
+      standalone: tools.unified_execution_router::UnifiedExecutionRouter.get_stats
+
+  # ─── SCHWAB OPTIONS TOOLS (NEW) ───
+  - id: schwab_get_positions
+    name: Schwab Get Positions
+    tier: T1
+    category: broker
+    provider: schwab
+    parameters: []
+    implementation:
+      standalone: tools.schwab::schwab_get_positions
+
+  - id: schwab_get_account
+    name: Schwab Get Account
+    tier: T1
+    category: broker
+    provider: schwab
+    parameters: []
+    implementation:
+      standalone: tools.schwab::schwab_get_account
+
+  - id: schwab_get_order_status
+    name: Schwab Get Order Status
+    tier: T1
+    category: broker
+    provider: schwab
+    parameters:
+      - { name: order_id, type: string, required: true }
+    implementation:
+      standalone: tools.schwab::schwab_get_order_status
+
+  - id: schwab_get_option_chain_parsed
+    name: Schwab Get Option Chain Parsed
+    tier: T2
+    category: market_data
+    provider: schwab
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: direction, type: string, required: false }
+    implementation:
+      standalone: tools.schwab::schwab_get_option_chain_parsed
+
+  - id: schwab_place_option_order
+    name: Schwab Place Option Order
+    tier: T3
+    category: execution
+    provider: schwab
+    requires_confirmation: true
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: quantity, type: integer, required: true }
+      - { name: side, type: string, required: true }
+      - { name: order_type, type: string, default: LIMIT }
+      - { name: price, type: number, required: false }
+    implementation:
+      standalone: tools.schwab::schwab_place_option_order
+
+  - id: schwab_check_compliance
+    name: Schwab Check Compliance
+    tier: T1
+    category: risk
+    provider: schwab
+    parameters: []
+    implementation:
+      standalone: tools.schwab::schwab_check_compliance
+
+  - id: reason_about_options_setup
+    name: Brain Options Inference
+    tier: T2
+    category: strategy
+    provider: llm
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: ohlcv_data, type: array, required: false }
+      - { name: technicals, type: dict, required: false }
+      - { name: option_chain, type: dict, required: false }
+    implementation:
+      standalone: tools.brain::reason_about_options_setup
+
+  - id: options_risk_governor
+    name: Options Risk Governor
+    tier: T1
+    category: risk
+    provider: internal
+    parameters:
+      - { name: options_decision, type: dict, required: false }
+      - { name: compliance_status, type: dict, required: false }
+      - { name: current_positions, type: array, required: false }
+    implementation:
+      standalone: tools.brain::options_risk_governor
+
+  - id: evaluate_profit_locking
+    name: Evaluate Profit Locking
+    tier: T1
+    category: risk
+    provider: internal
+    parameters:
+      - { name: positions, type: array, required: false }
+    implementation:
+      standalone: tools.profit_locking_engine::evaluate_profit_locking
+
+  - id: check_scale_in
+    name: Check Scale In
+    tier: T1
+    category: strategy
+    provider: internal
+    parameters:
+      - { name: opportunity, type: dict, required: false }
+      - { name: current_positions, type: array, required: false }
+    implementation:
+      standalone: tools.profit_locking_engine::check_scale_in
+
+  - id: execute_option_exits
+    name: Execute Option Exits
+    tier: T3
+    category: execution
+    provider: schwab
+    requires_confirmation: false
+    parameters:
+      - { name: exit_decisions, type: dict, required: false }
+    implementation:
+      standalone: tools.option_exit_executor::execute_option_exits
+
+  - id: topstep_consistency_enforcer
+    name: Topstep Consistency Enforcer
+    tier: T1
+    category: risk
+    provider: internal
+    parameters: []
+    implementation:
+      standalone: tools.topstep_consistency::topstep_consistency_enforcer

@@ -1,0 +1,28 @@
+# DOM Inspector Workflow
+# Automatically discovers and caches selectors for trading platform UIs
+version: "1.0"
+
+workflow:
+  id: dom-inspector-v1
+  name: DOM Inspector
+  description: Inspect trading platform DOM and cache selectors
+  version: "1.0.0"
+  tenant_id: alpha-trader
+  required_tiers: [T0, T1, T2, T3, T4]
+  
+  nodes:
+    - id: inspect-topstep
+      name: Inspect TopstepX DOM
+      phase: Observe
+      skill_id: inspect_dom
+      description: Log into TopstepX and discover UI selectors
+      inputs: []
+      outputs: [selectors]
+      tools: [inspect_dom]
+      parameters:
+        platform: "topstep"
+        headless: true
+      constraints:
+        time_budget: 120
+        
+  edges: []

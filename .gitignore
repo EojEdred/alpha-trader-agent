@@ -1,0 +1,51 @@
+# Environment
+.env
+.env.local
+.env.*.local
+venv/
+.venv/
+
+# Sensitive data
+schwab_token*
+*.token
+credentials.json
+secrets/
+cookies.txt
+certs/*.key
+certs/*.crt
+certs/*.pem
+*.pid
+topstepx_trade.html
+topstepx_trade.png
+
+
+# Media & Screenshots
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+
+# Cache and temporary
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store
+*.tmp
+*.bak
+
+# Logs
+logs/
+*.log
+
+# Data
+data/
+
+*.db
+*.sqlite
+*.jsonl
+*.json
+
+# Exceptions (tracked files)
+!agent_templates.yaml
+!openapitools.json

@@ -1,0 +1,119 @@
+# Forex Account Builder Workflow
+version: "1.0"
+
+workflow:
+  id: forex-builder-v1
+  name: Forex Account Builder Agent
+  description: Low-margin Forex scalper for account building
+  version: "1.1.0"
+  tenant_id: alpha-trader
+  required_tiers: [T0, T1, T2, T3, T4]
+  success_criteria: High-grade setups identified and executed
+  failure_modes:
+    - execution_failed: Log and skip
+    - reasoning_failed: Log and skip
+  phases_used: [Observe, Think, Plan, Execute, Verify]
+
+  nodes:
+    - id: fetch-eur-data
+      name: Fetch EUR/USD Data
+      phase: Observe
+      skill_id: fetch_ohlcv
+      description: Get 1h OHLCV for EUR/USD
+      inputs: []
+      outputs: [ohlcv_data]
+      parameters: { symbol: "EUR_USD", timeframe: "1h", limit: 50 }
+
+    - id: calc-eur-profile
+      name: Calculate EUR Volume Profile
+      phase: Observe
+      skill_id: calculate_profile_for_symbol
+      description: Calculate POC, FVA for EUR
+      inputs: [ohlcv_data]
+      outputs: [volume_profile]
+      parameters: { symbol: "EUR_USD" }
+
+    - id: calc-eur-technicals
+      name: Calculate EUR Technicals
+      phase: Observe
+      skill_id: calculate_technicals
+      description: SMA, RSI, MACD for EUR
+      inputs: [ohlcv_data]
+      outputs: [technicals]
+
+    - id: calc-eur-order-flow
+      name: Analyze EUR Order Flow
+      phase: Observe
+      skill_id: get_order_flow_signals
+      description: Analyze CVD and Delta for EUR
+      inputs: [ohlcv_data]
+      outputs: [order_flow]
+
+    - id: check-pdt
+      name: Check PDT Status
+      phase: Observe
+      skill_id: check_pdt_compliance
+      description: Verify real-time PDT limits on Schwab
+      inputs: []
+      outputs: [pdt_status]
+      tools: [check_pdt_compliance]
+
+    - id: brain-inference
+      name: Brain Reasoning
+      phase: Think
+      skill_id: reason_about_setup
+      description: Synthesize data into a Forex thesis using LLM
+      inputs: [ohlcv_data, volume_profile, order_flow, technicals, pdt_status]
+      outputs: [brain_decision]
+      tools: [reason_about_setup]
+      parameters: { symbol: "EUR_USD" }
+
+    - id: deep-research
+      name: Deep Research Critique
+      phase: Think
+      skill_id: deep_research_critique
+      description: Red Team the Forex thesis to find hidden risks
+      inputs: [brain_decision, ohlcv_data, technicals]
+      outputs: [critique_result]
+      tools: [deep_research_critique]
+      parameters: { symbol: "EUR_USD" }
+
+    - id: select-trade
+      name: Filter Decision
+      phase: Plan
+      skill_id: select_best_trade
+      description: Verify score > 75 and Critique Rating > 7
+      inputs: [brain_decision, critique_result, pdt_status]
+      outputs: [selected_trade]
+      tools: [strategy_filter]
+
+    - id: execute-trade
+      name: Execute Forex Trade
+      phase: Execute
+      skill_id: submit_trade
+      description: Place order on OANDA
+      inputs: [selected_trade]
+      outputs: [execution_result]
+      tools: [submit_trade]
+      parameters: { venue: "oanda" }
+
+    - id: log-and-reflect
+      name: Log and Reflect
+      phase: Verify
+      skill_id: log_execution
+      description: Record action and prepare for post-mortem
+      inputs: [brain_decision, execution_result]
+      outputs: [agent_log]
+      tools: [log_execution]
+
+  edges:
+    - { from: fetch-eur-data, to: calc-eur-profile }
+    - { from: calc-eur-profile, to: calc-eur-technicals }
+    - { from: calc-eur-technicals, to: calc-eur-order-flow }
+    - { from: calc-eur-order-flow, to: check-pdt }
+    - { from: check-pdt, to: brain-inference }
+    - { from: brain-inference, to: deep-research }
+    - { from: deep-research, to: select-trade }
+    - { from: select-trade, to: execute-trade, condition: "selected_trade != null" }
+    - { from: execute-trade, to: log-and-reflect }
+    - { from: select-trade, to: log-and-reflect, condition: "selected_trade == null" }

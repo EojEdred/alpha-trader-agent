@@ -1,0 +1,44 @@
+# Agent Learning Workflow - Self-Improvement Cycle
+version: "1.0"
+
+workflow:
+  id: agent-learning-v1
+  name: Agent Self-Reflection
+  description: Reviews the day's trades to improve inference logic
+  version: "1.0.0"
+  tenant_id: alpha-trader
+  required_tiers: [T0, T1, T2]
+  success_criteria: Post-mortems completed, learnings logged
+  phases_used: [Observe, Think, Verify]
+
+  nodes:
+    - id: fetch-executed-trades
+      name: Fetch Today's Trades
+      phase: Observe
+      skill_id: read_research
+      description: Get all trades executed in the last 24 hours
+      inputs: []
+      outputs: [executed_trades]
+      tools: [read_research]
+
+    - id: perform-reflection
+      name: Brain Self-Reflection
+      phase: Think
+      skill_id: self_reflect
+      description: Compare theses vs results to find biases
+      inputs: [executed_trades]
+      outputs: [learnings]
+      tools: [self_reflect]
+
+    - id: update-agent-memory
+      name: Update Agent Memory
+      phase: Verify
+      skill_id: log_execution
+      description: Save learnings to be injected into future prompts
+      inputs: [learnings]
+      outputs: [memory_update]
+      tools: [log_execution]
+
+  edges:
+    - { from: fetch-executed-trades, to: perform-reflection }
+    - { from: perform-reflection, to: update-agent-memory }

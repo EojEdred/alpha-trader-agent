@@ -1,0 +1,215 @@
+# Alpha Trader Configuration
+# Copy to config.yaml and customize
+
+risk_limits:
+  max_position_pct: 5.0        # Max 5% of portfolio per position
+  max_daily_loss_pct: 2.0      # Stop trading if daily loss exceeds 2%
+  max_open_positions: 10       # Maximum concurrent positions
+  min_risk_reward: 2.0         # Minimum risk/reward ratio
+
+broker:
+  primary: interactive_brokers
+  fallback: schwab
+  ib_host: "127.0.0.1"
+  ib_port: 7497                # 7497 for TWS, 4001 for IB Gateway
+  ib_client_id: 1
+
+llm:
+  provider: openai
+  model: gpt-4-turbo
+  fallback_model: gpt-3.5-turbo
+  # api_key set via OPENAI_API_KEY env var
+
+schedule:
+  research_cycle_cron: "0 4 * * *"    # 4:00 AM ET
+  morning_report_cron: "0 6 * * *"    # 6:00 AM ET
+  monitoring_interval_seconds: 300     # 5 minutes
+
+notifications:
+  email_enabled: true
+  email_to: ""                         # Your email
+  sms_enabled: false
+  sms_to: ""                           # Your phone number
+  # Twilio credentials set via env vars
+
+watchlists:
+  options:
+    - SPY
+    - QQQ
+    - TSLA
+
+  futures:
+    - ES    # S&P 500
+    - NQ    # Nasdaq
+    - YM    # Dow
+    - CL    # Crude Oil
+    - GC    # Gold
+    - SI    # Silver
+    - ZB    # 30Y Bond
+    - ZN    # 10Y Note
+
+  forex:
+    - EUR/USD
+    - GBP/USD
+    - USD/JPY
+    - AUD/USD
+
+  crypto:
+    - BTC/USDT
+    - ETH/USDT
+    - SOL/USDT
+    - AVAX/USDT
+    - LINK/USDT
+
+  crypto_exchanges:
+    - binance
+    - coinbase
+# Zynth-Level Configuration
+
+# Market Data APIs (Phase 1+2)
+market_data_apis:
+  technical:
+    provider: "oanda"  # or "alphavantage", "twelvedata"
+    api_key: "${OANDA_API_KEY}"
+    enabled: true
+  
+  fundamentals:
+    provider: "alphavantage"  # or "financialmodelingprep"
+    api_key: "${ALPHA_VANTAGE_API_KEY}"
+    enabled: true
+  
+  news:
+    provider: "newsapi.org"  # or "alphavantage"
+    api_key: "${NEWS_API_KEY}"
+    enabled: true
+  
+  options_flow:
+    provider: "polygon"  # or "thinkorswim"
+    api_key: "${TOS_API_KEY}"
+    enabled: false  # Requires subscription
+
+# Zynth-Level Configuration
+
+research:
+  enable_ingestion: true  # Feature flag for trafilatura
+  max_urls_per_batch: 10
+  evidence_confidence_threshold: 0.7
+
+capsules:
+  enabled:
+    - spy_qqq_liquidity_sweep
+    - nq_session_trend
+    - xauusd_macro_levels
+    - kalshi_macro_sensor
+
+portfolio:
+  max_risk_per_trade_pct: 0.5
+  max_loss_per_day_pct: 2.0
+  max_open_risk_pct: 5.0
+  consecutive_loss_limit: 2
+  correlation_threshold: 0.7
+
+execution_modes:
+  venues:
+    oanda:
+      auto_enabled: true
+      max_size_auto: 10000
+    kalshi:
+      auto_enabled: true
+      max_size_auto: 5000
+    polymarket:
+      auto_enabled: true
+      max_size_auto: 100  # in ETH
+    schwab:
+      auto_enabled: false  # Always CONFIRM
+    topstep:
+      auto_enabled: true   # AUTO mode enabled
+
+router:
+  confirmation_timeout_hours: 4
+  retry_failed_orders: true
+  max_retry_attempts: 3
+
+# ─── MULTI-MODAL EXECUTION (NEW) ───
+execution:
+  # Fallback chain: api → browser → desktop → signal_only
+  fallback_chain: ["api", "browser", "desktop", "signal_only"]
+  
+  # Circuit breaker
+  circuit_breaker:
+    enabled: true
+    consecutive_failure_threshold: 5
+    auto_reset_after_minutes: 30
+  
+  # Vision verification
+  vision:
+    enabled: true
+    verify_all_browser_executions: true
+    verify_all_desktop_executions: true
+    min_confidence: 0.7
+  
+  # Browser-use settings
+  browser:
+    headless: false  # Set true for production (invisible)
+    slow_mo_ms: 200
+    max_steps_per_task: 30
+    screenshot_on_error: true
+    human_like_delays: true  # Add random delays between actions
+  
+  # Desktop automation settings
+  desktop:
+    screenshot_on_every_action: true
+    ocr_verification: true
+    coordinate_calibration_required: true
+    safety_margin_px: 10
+  
+  # Platform credentials (loaded from env vars)
+  credentials:
+    tradingview:
+      username: "${TRADINGVIEW_USERNAME}"
+      password: "${TRADINGVIEW_PASSWORD}"
+    topstep:
+      username: "${TOPSTEP_USERNAME}"
+      password: "${TOPSTEP_PASSWORD}"
+    apex:
+      username: "${APEX_USERNAME}"
+      password: "${APEX_PASSWORD}"
+
+# ─── WEBHOOK SERVER ───
+webhook:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8000
+  secret: "${TRADINGVIEW_WEBHOOK_SECRET}"  # For signature verification
+  allowed_ips: []  # Empty = allow all (set for security)
+
+# ─── CAPSULES (ENHANCED) ───
+capsules:
+  enabled:
+    - spy_qqq_liquidity_sweep
+    - nq_session_trend
+    - xauusd_macro_levels
+    - kalshi_macro_sensor
+    - tradingview_confluence  # NEW: Uses TradingView browser agent
+    - prop_firm_scalper       # NEW: Uses PropFirm browser agent
+
+# Cache and Streaming (Phase 3)
+cache:
+  enabled: true
+  default_ttl_seconds: 300  # 5 minutes
+  max_size: 1000  # Max cache entries
+  use_ml_weighting: false  # Use ML-based source weighting
+
+streaming:
+  enabled: false
+  use_mock: true  # Use mock streamer (set false for real WebSocket)
+  websocket_uri: ""  # wss://api.example.com/stream
+  reconnect_interval_seconds: 5
+  max_reconnect_attempts: 10
+
+# ML Source Weighting (Phase 3 - Future Enhancement)
+ml:
+  enabled: false  # Disabled until model is trained
+  min_samples: 100  # Minimum samples before weighting
+  model_path: "./models/source_weights.pkl"  # Path to trained model
+

@@ -1,0 +1,58 @@
+//@version=5
+strategy("AlphaTrader - EMA Cross + Heikin-Ashi", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// === INPUTS ===
+emaFastLen = input.int(20, "Fast EMA", minval=1)
+emaSlowLen = input.int(50, "Slow EMA", minval=1)
+emaTrendLen = input.int(100, "Trend EMA", minval=1)
+
+// === INDICATORS ===
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+emaTrend = ta.ema(close, emaTrendLen)
+
+// Heikin-Ashi
+haClose = (open + high + low + close) / 4
+haOpen = float(na)
+haOpen := na(haOpen[1]) ? (open + close) / 2 : (haOpen[1] + haClose[1]) / 2
+haHigh = math.max(high, math.max(haOpen, haClose))
+haLow = math.min(low, math.min(haOpen, haClose))
+
+// === CONDITIONS ===
+// Long: EMA cross up + green HA + HA close > EMA fast
+bullishCross = ta.crossover(emaFast, emaSlow)
+greenHA = haClose > haOpen
+aboveFast = haClose > emaFast
+
+// Short: EMA cross down + red HA + HA close < EMA fast
+bearishCross = ta.crossunder(emaFast, emaSlow)
+redHA = haClose < haOpen
+belowFast = haClose < emaFast
+
+// === ENTRIES ===
+if bullishCross and greenHA and aboveFast
+    strategy.entry("Long", strategy.long, comment="EMA Cross + HA")
+
+if bearishCross and redHA and belowFast
+    strategy.entry("Short", strategy.short, comment="EMA Cross + HA")
+
+// === EXITS ===
+// Exit when trend reverses (slow EMA crosses trend EMA)
+if strategy.position_size > 0 and ta.crossunder(emaSlow, emaTrend)
+    strategy.close("Long", comment="Trend Reversal")
+
+if strategy.position_size < 0 and ta.crossover(emaSlow, emaTrend)
+    strategy.close("Short", comment="Trend Reversal")
+
+// === PLOTS ===
+plot(emaFast, "EMA Fast", color=color.new(color.blue, 0), linewidth=2)
+plot(emaSlow, "EMA Slow", color=color.new(color.orange, 0), linewidth=2)
+plot(emaTrend, "EMA Trend", color=color.new(color.gray, 50), linewidth=1)
+
+// === ALERTS ===
+alertcondition(bullishCross and greenHA and aboveFast, "Long Signal", "EMA Cross Long on {{ticker}}")
+alertcondition(bearishCross and redHA and belowFast, "Short Signal", "EMA Cross Short on {{ticker}}")
+
+// === WEBHOOK SETUP ===
+// Copy this alert message format into TradingView alert:
+// {"symbol":"{{ticker}}","side":"{{strategy.order.action}}","price":{{close}},"quantity":1,"strategy":"ema_cross_heikin","timeframe":"{{interval}}","passphrase":"YOUR_SECRET"}

@@ -1,0 +1,85 @@
+# ═══════════════════════════════════════════════════════════════
+# UNIFIED TRADING PARAMETERS — Single Source of Truth
+# Any file needing trading parameters MUST import from here.
+# ═══════════════════════════════════════════════════════════════
+
+# ─── PAPER TRADING MODE ───
+# When true: orders are validated but NOT submitted to brokers.
+# Logs show what WOULD have traded. Run for 2+ days before going live.
+PAPER_TRADE: false
+
+# ─── TOPSTEP COMBINE (FUTURES) ───
+prop_firm:
+  daily_profit_cap: 1500        # Hard stop when reached
+  daily_loss_limit: -1800       # Aligned with TOPSTEP_MAX_DAILY_LOSS — hard loss floor
+  max_contracts: 1              # Aligned with TOPSTEP_MAX_CONTRACTS — 1 contract max
+  stop_loss_pts: 8              # 8pt stop on NQ = $160-320 risk
+  take_profit_pts: 12           # 12pt target = $240-480 gain
+  time_exit_minutes: 30         # Scalp only — no runners
+  score_threshold_trade: 60     # Higher conviction required
+  score_threshold_no_trade: 45
+  
+  # Contract specs (for P&L calculations)
+  nq_dollars_per_point: 20      # NQ = $20/point per contract
+  es_dollars_per_point: 12.50   # ES = $12.50/point
+  
+  # Consistency rules
+  consistency_best_day_locked: 13508.60
+  consistency_max_new_day: 8000  # Don't reset consistency ratio
+
+# ─── OPTIONS (SCHWAB) ───
+options:
+  # Delta / strike selection
+  delta_min: 0.50               # HARD FLOOR: reject anything < 0.50 delta
+  delta_max: 0.70               # ATM to slight ITM only
+  delta_preferred: 0.55         # Sweet spot
+  
+  # Entry rules
+  entry_time: "09:28"           # Pre-market gap entry ONLY
+  entry_cutoff: "09:32"         # Cancel if not filled by 9:32
+  min_gap_pct: 0.30             # No trade if gap < 0.30%
+  max_gap_pct: 8.0              # Skip absurd gaps
+  
+  # Sizing
+  base_quantity: 1              # Start conservative: 1 contract
+  max_quantity: 2               # Never more than 2 per symbol
+  max_total_option_positions: 2 # Max 2 concurrent option positions
+  max_position_cost: 500        # Max $500 premium per trade
+  max_portfolio_pct: 0.25       # Max 25% of buying power
+  
+  # Profit locking tiers (per contract)
+  tier_1_pl: 0.40               # Sell 50% when up $0.40/ct
+  tier_2_pl: 0.80               # Sell 25% more when up $0.80/ct
+  tier_3_close: true            # Close remaining at tier 2 — NO RUNNERS
+  
+  # Stops
+  hard_stop_dollars: -60        # Close all if down $60 total
+  original_stop_pct: 0.80       # 20% stop on premium
+  breakeven_buffer: 0.02        # Stop = entry + $0.02 after T1
+  
+  # Time exits
+  max_hold_minutes: 20          # 20 min max — theta burns after that
+  flat_exit_threshold: -10      # If negative after 15 min, exit
+  
+  # Trailing stops (only after T1 if holding runner)
+  trail_after_t1: 0.30          # 30% trail if still holding
+  
+  # Score thresholds
+  score_trade: 45
+  score_no_trade: 35
+
+# ─── CIRCUIT BREAKERS ───
+circuit_breakers:
+  enabled: true
+  daily_loss_halt: -1800        # Halt ALL trading for 24h — aligned with live combine limit
+  consecutive_losses_halt: 3    # Halt for 2h after 3 losses
+  options_down_pct_halt: 30     # Close options if down 30%
+  futures_down_dollars_halt: 200 # Flatten futures if down $200
+  emergency_equity_floor: 48000 # Topstep $50K combine hard floor ($2,000 max loss)
+
+# ─── SCHEDULER ───
+scheduler:
+  futures_enabled: false        # DISABLED: TopstepX combine blown
+  options_enabled: true         # Only pre-market entry
+  options_midday_scalper: false # DISABLED — only gap entry
+  position_monitor_interval_sec: 30

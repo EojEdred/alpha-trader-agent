@@ -1,0 +1,147 @@
+# Options Scalper Workflow
+# Autonomous options scalping via Charles Schwab API
+version: "1.0"
+
+workflow:
+  id: options-scalper-v1
+  name: Options Scalper Agent
+  description: Autonomous 0DTE/1DTE options scalping on SPY/QQQ via Schwab
+  version: "1.0.0"
+  tenant_id: alpha-trader
+  required_tiers: [T0, T1, T2, T3, T4]
+  success_criteria: High-probability option scalps with tight risk management
+  failure_modes:
+    - compliance_violation: Abort immediately
+    - api_error: Log and retry next cycle
+  phases_used: [Observe, Think, Plan, Execute, Verify]
+
+  nodes:
+    - id: schwab-compliance-check
+      name: Schwab Compliance Check
+      phase: Observe
+      skill_id: schwab_check_compliance
+      description: Verify account buying power and day trade count
+      inputs: []
+      outputs: [compliance_status]
+      tools: [schwab_check_compliance]
+      constraints:
+        time_budget: 15
+
+    - id: get-current-positions
+      name: Get Current Positions
+      phase: Observe
+      skill_id: schwab_get_positions
+      description: Read open option positions from Schwab
+      inputs: []
+      outputs: [current_positions]
+      tools: [schwab_get_positions]
+      constraints:
+        time_budget: 15
+
+    - id: fetch-underlying-data
+      name: Fetch Underlying Data
+      phase: Observe
+      skill_id: fetch_futures_data
+      description: Get SPY/QQQ 5-min OHLCV
+      inputs: []
+      outputs: [ohlcv_data]
+      parameters: { contract: "ES" }
+      tools: [fetch_futures_data]
+      constraints:
+        time_budget: 15
+
+    - id: fetch-option-chain
+      name: Fetch Option Chain
+      phase: Observe
+      skill_id: schwab_get_option_chain_parsed
+      description: Get ATM option chain with Greeks
+      inputs: []
+      outputs: [option_chain]
+      parameters: { symbol: "SPY" }
+      tools: [schwab_get_option_chain_parsed]
+      constraints:
+        time_budget: 15
+
+    - id: calculate-technicals
+      name: Calculate Technicals
+      phase: Think
+      skill_id: calculate_technicals
+      description: RSI, VWAP, SMA20 on underlying
+      inputs: [ohlcv_data]
+      outputs: [technicals]
+      parameters: { indicators: ["rsi_14", "sma_20"] }
+      tools: [calculate_technicals]
+
+    - id: brain-options-inference
+      name: Brain Options Decision
+      phase: Think
+      skill_id: reason_about_options_setup
+      description: LLM picks direction, strike, expiration, max entry
+      inputs: [ohlcv_data, technicals, option_chain]
+      outputs: [options_decision]
+      tools: [reason_about_options_setup]
+      parameters: { symbol: "SPY" }
+
+    - id: check-scale-in
+      name: Check Scale-In Opportunity
+      phase: Plan
+      skill_id: check_scale_in
+      description: If already in winning position, consider adding size
+      inputs: [options_decision, current_positions]
+      outputs: [scale_in_decision]
+      tools: [check_scale_in]
+
+    - id: options-risk-governor
+      name: Options Risk Governor
+      phase: Plan
+      skill_id: options_risk_governor
+      description: Validate against options risk rules
+      inputs: [options_decision, compliance_status, current_positions]
+      outputs: [risk_decision]
+      tools: [options_risk_governor]
+
+    - id: execute-options-order
+      name: Execute Options Order
+      phase: Execute
+      skill_id: schwab_place_option_order
+      description: Place buy_to_open limit order via Schwab API
+      inputs: [risk_decision, options_decision]
+      outputs: [execution_result]
+      tools: [schwab_place_option_order]
+      parameters:
+        order_type: "LIMIT"
+      constraints:
+        time_budget: 30
+
+    - id: verify-fill
+      name: Verify Order Fill
+      phase: Verify
+      skill_id: schwab_get_order_status
+      description: Confirm order was filled
+      inputs: [execution_result]
+      outputs: [fill_verification]
+      tools: [schwab_get_order_status]
+      constraints:
+        time_budget: 15
+
+    - id: log-trade
+      name: Log Trade Execution
+      phase: Verify
+      skill_id: log_execution
+      description: Record for audit and learning
+      inputs: [options_decision, execution_result, fill_verification]
+      outputs: [audit_log]
+      tools: [log_execution]
+
+  edges:
+    - { from: schwab-compliance-check, to: get-current-positions }
+    - { from: get-current-positions, to: fetch-underlying-data }
+    - { from: fetch-underlying-data, to: fetch-option-chain }
+    - { from: fetch-option-chain, to: calculate-technicals }
+    - { from: calculate-technicals, to: brain-options-inference }
+    - { from: brain-options-inference, to: check-scale-in }
+    - { from: check-scale-in, to: options-risk-governor }
+    - { from: options-risk-governor, to: execute-options-order, condition: "risk_decision.approved == true" }
+    - { from: execute-options-order, to: verify-fill }
+    - { from: verify-fill, to: log-trade }
+    - { from: options-risk-governor, to: log-trade, condition: "risk_decision.approved == false" }

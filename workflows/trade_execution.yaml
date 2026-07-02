@@ -1,0 +1,103 @@
+# Trade Execution - Triggered manually or by signal
+version: "1.0"
+
+workflow:
+  id: trade-execution-v1
+  name: Trade Execution
+  description: Executes approved trades with validation and audit logging
+  version: "1.0.0"
+  tenant_id: alpha-trader
+  required_tiers: [T0, T1, T2, T3]
+  success_criteria: Order filled, position verified, audit logged
+  failure_modes:
+    - order_rejected: Log reason, notify, do not retry
+    - partial_fill: Evaluate and decide
+    - timeout: Cancel order, log, notify
+  phases_used: [Plan, Execute, Verify]
+
+  nodes:
+    - id: validate-trade
+      name: Validate Trade Parameters
+      phase: Plan
+      skill_id: validate_trade
+      description: Validate symbol, price, size, margin
+      inputs: [trade_request]
+      outputs: [validated_trade]
+      tools: [validate_trade]
+      constraints:
+        time_budget: 15
+
+    - id: check-risk-limits
+      name: Check Risk Limits
+      phase: Plan
+      skill_id: evaluate_portfolio_risk
+      description: Final risk check before execution
+      inputs: [validated_trade, current_portfolio]
+      outputs: [risk_approved_trade]
+      tools: [evaluate_portfolio_risk]
+      constraints:
+        time_budget: 15
+
+    - id: submit-order
+      name: Submit Order
+      phase: Execute
+      skill_id: submit_order
+      description: Submit order to broker
+      inputs: [risk_approved_trade]
+      outputs: [order_submission_result]
+      tools: [submit_order]
+      constraints:
+        time_budget: 30
+
+    - id: monitor-fill
+      name: Monitor Order Fill
+      phase: Execute
+      skill_id: get_order_status
+      description: Monitor until filled or timeout
+      inputs: [order_submission_result]
+      outputs: [fill_result]
+      tools: [get_order_status, modify_order, cancel_order]
+      constraints:
+        time_budget: 300
+
+    - id: verify-position
+      name: Verify Position
+      phase: Verify
+      skill_id: get_positions
+      description: Verify position matches expected
+      inputs: [fill_result]
+      outputs: [position_verification]
+      tools: [get_positions]
+      constraints:
+        time_budget: 15
+
+    - id: analyze-execution
+      name: Analyze Execution Quality
+      phase: Verify
+      skill_id: verify_fill_quality
+      description: Calculate slippage and score execution
+      inputs: [fill_result, risk_approved_trade]
+      outputs: [execution_analysis]
+      tools: [verify_fill_quality]
+      constraints:
+        time_budget: 15
+
+    - id: log-execution
+      name: Log Execution
+      phase: Verify
+      skill_id: log_execution
+      description: Create immutable audit log entry
+      inputs: [fill_result, position_verification, execution_analysis]
+      outputs: [audit_log_entry]
+      tools: [log_execution]
+      constraints:
+        time_budget: 15
+
+  edges:
+    - { from: validate-trade, to: check-risk-limits }
+    - { from: check-risk-limits, to: submit-order, condition: "risk_approved == true" }
+    - { from: submit-order, to: monitor-fill }
+    - { from: monitor-fill, to: verify-position }
+    - { from: monitor-fill, to: analyze-execution }
+    - { from: verify-position, to: log-execution }
+    - { from: analyze-execution, to: log-execution }

@@ -1,0 +1,147 @@
+# Morning Report - Runs at 6:00 AM ET (Zynth-Level)
+version: "2.0"
+
+workflow:
+  id: morning-report-zynth
+  name: Morning Report (Zynth-Level)
+  description: Zynth-level morning report with research ingestion, capsule execution, and routing
+  version: "2.0.0"
+  tenant_id: alpha-trader
+  required_tiers: [T0, T1]
+  success_criteria: Report delivered with execution plans
+  failure_modes:
+    - delivery_failure: Retry 3x then escalate
+  phases_used: [Observe, Think, Plan, Build, Execute]
+
+  nodes:
+    - id: fetch-market-data
+      name: Auto-Fetch Market Data
+      phase: Observe
+      skill_id: market_data_fetcher
+      description: Automatically fetch market data (technical, fundamentals, news) for multiple symbols
+      inputs: [symbols_from_capsules]
+      outputs: [market_data_dict]
+      tools: [fetch_market_data]
+      constraints:
+        time_budget: 120
+
+    - id: ingest-research-intelligent
+      name: Ingest Research (Intelligent)
+      phase: Observe
+      skill_id: ingest_research
+      description: Intelligent ingestion combining user URLs and auto-fetched market data
+      inputs: [research_urls, market_data]
+      outputs: [evidence_items, thesis_object]
+      tools: [ingest_research]
+      constraints:
+        time_budget: 300
+
+    - id: ingest-research
+      name: Ingest Research URLs (Manual)
+      phase: Observe
+      skill_id: ingest_research
+      description: Ingest web research content from user-provided URLs
+      inputs: [research_urls]
+      outputs: [evidence_items, thesis_object]
+      tools: [ingest_research]
+      constraints:
+        time_budget: 300
+
+    - id: run-capsules
+      name: Generate Trade Intents from Capsules
+      phase: Think
+      skill_id: run_capsules
+      description: Execute enabled capsules to generate trade intents
+      inputs: [thesis_object, market_data]
+      outputs: [trade_intents]
+      tools: [run_capsules]
+      constraints:
+        time_budget: 600
+
+    - id: portfolio-brain
+      name: Rank and Size Intents
+      phase: Plan
+      skill_id: portfolio_brain
+      description: Rank intents, suppress duplicates, calculate position sizes
+      inputs: [trade_intents, current_positions]
+      outputs: [ranked_intents]
+      tools: [portfolio_brain]
+      constraints:
+        time_budget: 120
+
+    - id: risk-governor
+      name: Validate and Approve Intents
+      phase: Plan
+      skill_id: risk_governor
+      description: Apply risk limits and approve/reject intents
+      inputs: [ranked_intents, account_state]
+      outputs: [risk_decisions]
+      tools: [risk_governor]
+      constraints:
+        time_budget: 120
+
+    - id: router
+      name: Generate Execution Plans
+      phase: Plan
+      skill_id: router
+      description: Route approved intents to AUTO/CONFIRM/SIGNAL_ONLY modes
+      inputs: [risk_decisions, config]
+      outputs: [execution_plans]
+      tools: [router]
+      constraints:
+        time_budget: 60
+
+    - id: format-report
+      name: Format Enhanced Report
+      phase: Build
+      skill_id: generate_report
+      description: Format Zynth-level report with grouped/ranked execution plans
+      inputs: [execution_plans]
+      outputs: [formatted_reports]
+      tools: [generate_zynth_report]
+      constraints:
+        time_budget: 60
+
+    - id: deliver-email
+      name: Deliver via Email
+      phase: Execute
+      skill_id: send_email
+      description: Send HTML report via email
+      inputs: [formatted_reports]
+      outputs: [email_delivery_status]
+      tools: [send_email]
+      constraints:
+        time_budget: 30
+
+    - id: deliver-sms
+      name: Deliver via SMS
+      phase: Execute
+      skill_id: send_sms
+      description: Send condensed report via SMS
+      inputs: [formatted_reports]
+      outputs: [sms_delivery_status]
+      tools: [send_sms]
+      constraints:
+        time_budget: 30
+
+    - id: log-delivery
+      name: Log Delivery Status
+      phase: Execute
+      skill_id: log_execution
+      description: Record delivery status
+      inputs: [email_delivery_status, sms_delivery_status]
+      outputs: [delivery_log]
+      tools: [log_execution]
+      constraints:
+        time_budget: 15
+
+  edges:
+    - { from: ingest-research, to: run-capsules, inputs: [evidence_items, thesis_object] }
+    - { from: run-capsules, to: portfolio-brain, inputs: [trade_intents] }
+    - { from: portfolio-brain, to: risk-governor, inputs: [ranked_intents] }
+    - { from: risk-governor, to: router, inputs: [risk_decisions] }
+    - { from: router, to: format-report, inputs: [execution_plans] }
+    - { from: format-report, to: deliver-email }
+    - { from: format-report, to: deliver-sms }
+    - { from: deliver-email, to: log-delivery }
+    - { from: deliver-sms, to: log-delivery }
