@@ -10,8 +10,9 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import { useAlphaTrader } from '../context/WebSocketContext'
 import StatCard from '../components/StatCard'
 import TradeTable from '../components/TradeTable'
-import AgentGrid from '../components/AgentGrid'
+import AgentSwarmVisualizer from '../components/AgentSwarmVisualizer'
 import StatusBadge from '../components/StatusBadge'
+
 import { formatCurrency, formatDuration } from '../lib/utils'
 
 export default function Dashboard() {
@@ -135,10 +136,8 @@ export default function Dashboard() {
         <TradeTable trades={trades.slice(0, 5)} compact />
       </div>
 
-      <div className="bg-panel border border-border rounded-xl p-5">
-        <h3 className="text-xs font-bold uppercase tracking-wide text-dim mb-4">Agents</h3>
-        <AgentGrid agents={agents} compact />
-      </div>
+      <AgentSwarmVisualizer agents={agents} />
+
     </div>
   )
 }

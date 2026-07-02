@@ -50,6 +50,13 @@ TRAIL_TIER_2 = 0.25     # After Tier 2 partial: 25% trail
 TRAIL_TIER_3 = 0.20     # After Tier 3 partial: 20% trail
 TRAIL_TIER_4 = 0.15     # After Tier 4: 15% trail (tighten on big winners)
 
+# Deep-ITM runner override: when a 0DTE option goes deep ITM quickly, force
+# trend-mode behavior so we scale out instead of closing all at Tier 2.
+DEEP_ITM_RUNNER_ENABLED = (
+    os.getenv("DEEP_ITM_RUNNER_ENABLED", "true").lower() == "true"
+)
+DEEP_ITM_DELTA_THRESHOLD = float(os.getenv("DEEP_ITM_DELTA_THRESHOLD", "0.90"))
+
 
 def _load_state() -> dict:
     try:
@@ -76,6 +83,40 @@ def _option_key(pos: dict) -> str:
 
 def _get_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _is_deep_itm_runner(pos: dict) -> bool:
+    """
+    Detect a deep-ITM option runner.
+
+    When a 0DTE option goes deep in-the-money (delta magnitude >= threshold),
+    it behaves almost like stock. We want to keep a runner with a trailing stop
+    instead of closing the whole position at the scalp Tier 2 target.
+    """
+    if not DEEP_ITM_RUNNER_ENABLED:
+        return False
+
+    option_type = pos.get("option_type", "").lower()
+    if option_type not in ("call", "put"):
+        return False
+
+    try:
+        from tools.schwab import get_schwab_client
+
+        client = get_schwab_client()
+        option_symbol = _option_key(pos)
+        resp = client.client.get_quotes([option_symbol])
+        data = resp.json()
+        quote = data.get(option_symbol, {}).get("quote", {})
+        delta = float(quote.get("delta", 0) or 0)
+
+        if option_type == "put":
+            return delta <= -DEEP_ITM_DELTA_THRESHOLD
+        else:
+            return delta >= DEEP_ITM_DELTA_THRESHOLD
+    except Exception as e:
+        logger.debug(f"Deep-ITM check failed for {_option_key(pos)}: {e}")
+        return False
 
 
 def initialize_position(pos: dict, brain_metadata: dict = None, trend_mode: str = "scalp"):
@@ -238,6 +279,11 @@ def evaluate_options_positions(positions: List[dict], market_context: dict = Non
         
         pos_state = state[key]
         is_trend = pos_state.get("trend_mode") == "trend"
+        deep_itm = _is_deep_itm_runner(pos) and unrealized_pl > 0
+        if deep_itm:
+            is_trend = True
+            logger.info(f"🚀 Deep-ITM runner override: {key} → treating as trend mode")
+
         current_contracts = pos_state.get("current_contracts", contracts)
         avg_entry = pos_state.get("average_entry", avg_price)
         minutes = _minutes_held(pos_state)
@@ -373,7 +419,7 @@ def evaluate_options_positions(positions: List[dict], market_context: dict = Non
             max_hold = 45 if is_trend else MAX_HOLD_MINUTES
             flat_threshold = -15 if is_trend else FLAT_EXIT_THRESHOLD
 
-        if not reason and not swing_hold and minutes > max_hold:
+        if not reason and not swing_hold and not deep_itm and minutes > max_hold:
             if unrealized_pl <= flat_threshold:
                 # NOT GREEN — KILL IT. Dont let losers run.
                 reason = f"TIME EXIT: held {minutes:.0f}min, P&L ${unrealized_pl:.2f} — cutting loser"
