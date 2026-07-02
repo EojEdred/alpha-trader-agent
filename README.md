@@ -4,6 +4,12 @@ Alpha Trader (Dexter) is a fully autonomous, multi-modal trading research and ex
 
 It features a premium, pre-built web dashboard command center that serves as a plug-and-play management interface for you or your users.
 
+### 📥 Packaged Download
+You can download the latest pre-packaged, zero-configuration version of the app directly from GitHub:
+👉 **[Download Alpha Trader (alpha-trader-package.zip)](https://github.com/EojEdred/alpha-trader-agent/releases/download/v1.0.0/alpha-trader-package.zip)**
+
+*(Contains pre-compiled frontend assets. Excludes all private `.env` keys and credentials for security)*
+
 ---
 
 ## ✨ Features
