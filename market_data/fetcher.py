@@ -116,7 +116,7 @@ class MarketDataFetcher:
         }
 
     async def _fetch_technical(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """Fetch OHLCV data from OANDA or configured provider."""
+        """Fetch OHLCV data from configured provider."""
         if not self.apis.get("technical", {}).get("enabled", True):
             logger.info(f"Technical data disabled for {symbol}")
             return None
@@ -124,7 +124,9 @@ class MarketDataFetcher:
         try:
             provider = self.apis["technical"].get("provider", "oanda")
 
-            if provider == "oanda":
+            if provider == "massive":
+                return await self._fetch_massive_technical(symbol)
+            elif provider == "oanda":
                 return await self._fetch_oanda_technical(symbol)
             else:
                 return await self._fetch_alphavantage_technical(symbol)
@@ -132,6 +134,34 @@ class MarketDataFetcher:
         except Exception as e:
             logger.error(f"Failed to fetch technical data for {symbol}: {e}")
             return None
+
+    async def _fetch_massive_technical(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Fetch OHLCV data from Massive API."""
+        from market_data.providers.massive_provider import MassiveProvider
+
+        provider = MassiveProvider(self.config)
+        try:
+            data = await provider.get_ohlcv(symbol, multiplier=1, timespan="hour", days=5)
+            if data and data.get("candles"):
+                latest = data["candles"][-1]
+                candles = data["candles"]
+                return {
+                    "provider": "massive",
+                    "symbol": symbol,
+                    "open": latest.get("open"),
+                    "high": latest.get("high"),
+                    "low": latest.get("low"),
+                    "close": latest.get("close"),
+                    "volume": latest.get("volume"),
+                    "timestamp": latest.get("timestamp"),
+                    "candles": candles,
+                    "ma_short": self._calculate_ma(candles, 5, price_key="close"),
+                    "ma_long": self._calculate_ma(candles, 20, price_key="close"),
+                    "rsi": self._calculate_rsi(candles, price_key="close"),
+                }
+            return data
+        finally:
+            await provider.close()
 
     async def _fetch_oanda_technical(self, symbol: str) -> Dict[str, Any]:
         """Fetch OHLCV data from OANDA API."""
@@ -467,20 +497,46 @@ class MarketDataFetcher:
 
         return symbol_map.get(symbol, symbol)
 
-    def _calculate_ma(self, candles: List[Dict[str, Any]], period: int) -> float:
-        """Calculate simple moving average."""
+    def _calculate_ma(
+        self,
+        candles: List[Dict[str, Any]],
+        period: int,
+        price_key: Optional[str] = None,
+    ) -> float:
+        """Calculate simple moving average.
+
+        Args:
+            candles: List of candle dicts.
+            period: MA lookback period.
+            price_key: If provided, extract close from c[price_key]. Otherwise
+                       uses OANDA's nested c["mid"]["c"] format.
+        """
         if len(candles) < period:
             return 0.0
 
-        closes = [c["mid"]["c"] for c in candles[-period:]]
+        if price_key:
+            closes = [c[price_key] for c in candles[-period:] if price_key in c]
+        else:
+            closes = [c["mid"]["c"] for c in candles[-period:]]
+
+        if not closes:
+            return 0.0
         return sum(closes) / len(closes)
 
-    def _calculate_rsi(self, candles: List[Dict[str, Any]], period: int = 14) -> float:
+    def _calculate_rsi(
+        self,
+        candles: List[Dict[str, Any]],
+        period: int = 14,
+        price_key: Optional[str] = None,
+    ) -> float:
         """Calculate RSI indicator."""
         if len(candles) < period + 1:
             return 50.0
 
-        closes = [c["mid"]["c"] for c in candles]
+        if price_key:
+            closes = [c[price_key] for c in candles if price_key in c]
+        else:
+            closes = [c["mid"]["c"] for c in candles]
 
         gains = []
         losses = []

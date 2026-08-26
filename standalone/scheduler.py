@@ -12,10 +12,13 @@ from apscheduler.triggers.cron import CronTrigger
 from functools import wraps
 from loguru import logger
 import pytz
+import os
+from dotenv import load_dotenv
 
 from dexter.state import get_state, AgentStatus
 
 ET = pytz.timezone('America/New_York')
+load_dotenv()
 
 
 def _job_wrapper(agent_id: str):
@@ -38,8 +41,8 @@ def _job_wrapper(agent_id: str):
         return wrapper
     return decorator
 
-# Feature flags — CONSERVATIVE REBUILD: futures DISABLED, options pre-market ONLY
-ENABLE_PROP_FIRM = False   # DISABLED: TopstepX combine is blown ($47,936 < $48,000 floor)
+# Feature flags — conservative defaults, overridable from .env
+ENABLE_PROP_FIRM = os.getenv("ENABLE_PROP_FIRM", "false").lower() == "true"
 ENABLE_OPTIONS = True      # ENABLED: Schwab pre-market gap-entry + options position monitor
 ENABLE_MIDDAY_SCALPER = False  # DISABLED: no mid-day rotation, only 9:28 entry
 ENABLE_QQQ_VWAP_BOUNCE = True  # ENABLED: intraday QQQ VWAP-reclaim option scalps
@@ -139,7 +142,7 @@ class Scheduler:
             coalesce=True
         )
 
-        # ─── PROP FIRM JOBS — OVERNIGHT SESSION ONLY (6 PM - 5 AM ET) ───
+        # ─── PROP FIRM JOBS — EVERY MINUTE DURING CME HOURS ───
         if ENABLE_PROP_FIRM:
             # Evening session: 6:00 PM - 11:59 PM (Sun-Thu)
             self.scheduler.add_job(
@@ -147,13 +150,14 @@ class Scheduler:
                 CronTrigger(
                     day_of_week='sun,mon,tue,wed,thu',
                     hour='18-23',
-                    minute='*/3',
+                    minute='*',
                     timezone=ET
                 ),
                 id='prop-firm-scalper-evening',
                 name='Prop Firm Scalper (Evening 6PM-12AM)',
                 misfire_grace_time=60,
-                coalesce=True
+                coalesce=True,
+                max_instances=1
             )
             # Early morning session: 12:00 AM - 4:59 AM (Mon-Fri)
             self.scheduler.add_job(
@@ -161,13 +165,14 @@ class Scheduler:
                 CronTrigger(
                     day_of_week='mon-fri',
                     hour='0-4',
-                    minute='*/3',
+                    minute='*',
                     timezone=ET
                 ),
                 id='prop-firm-scalper-early',
                 name='Prop Firm Scalper (Early 12AM-5AM)',
                 misfire_grace_time=60,
-                coalesce=True
+                coalesce=True,
+                max_instances=1
             )
             # Day session: 4:00 AM - 4:59 PM ET (Mon-Fri) — CME active hours
             self.scheduler.add_job(
@@ -175,13 +180,14 @@ class Scheduler:
                 CronTrigger(
                     day_of_week='mon-fri',
                     hour='4-16',
-                    minute='*/3',
+                    minute='*',
                     timezone=ET
                 ),
                 id='prop-firm-scalper-day',
                 name='Prop Firm Scalper (Day 4AM-5PM)',
                 misfire_grace_time=60,
-                coalesce=True
+                coalesce=True,
+                max_instances=1
             )
             # Late night gap fill: 11:00 PM - 11:59 PM ET (Sun-Thu)
             self.scheduler.add_job(
@@ -189,13 +195,14 @@ class Scheduler:
                 CronTrigger(
                     day_of_week='sun,mon,tue,wed,thu',
                     hour='23',
-                    minute='*/3',
+                    minute='*',
                     timezone=ET
                 ),
                 id='prop-firm-scalper-late',
                 name='Prop Firm Scalper (Late 11PM-12AM)',
                 misfire_grace_time=60,
-                coalesce=True
+                coalesce=True,
+                max_instances=1
             )
             # Position Monitor — every minute during overnight hours
             self.scheduler.add_job(
@@ -251,6 +258,36 @@ class Scheduler:
                 name='Position Monitor (Late 11PM-12AM)',
                 misfire_grace_time=30,
                 coalesce=True
+            )
+
+            # Chart Tracker — every 15 seconds during CME equity-index session
+            self.scheduler.add_job(
+                self._run_chart_tracker,
+                CronTrigger(
+                    day_of_week='sun,mon,tue,wed,thu',
+                    hour='18-23',
+                    second='*/15',
+                    timezone=ET
+                ),
+                id='chart-tracker-evening',
+                name='Chart Tracker (Evening 6PM-12AM)',
+                misfire_grace_time=15,
+                coalesce=True,
+                max_instances=1
+            )
+            self.scheduler.add_job(
+                self._run_chart_tracker,
+                CronTrigger(
+                    day_of_week='mon-fri',
+                    hour='0-16',
+                    second='*/15',
+                    timezone=ET
+                ),
+                id='chart-tracker-day',
+                name='Chart Tracker (Day 12AM-5PM)',
+                misfire_grace_time=15,
+                coalesce=True,
+                max_instances=1
             )
 
         # ─── OPTIONS SCALPER — Every 2 minutes, rotating SPY → QQQ → TSLA ───
@@ -419,7 +456,7 @@ class Scheduler:
         """Execute morning report generation."""
         logger.info("Starting scheduled morning report")
         try:
-            await self.orchestrator.execute_workflow('morning-report-v1')
+            await self.orchestrator.execute_workflow('morning-report-zynth')
             logger.info("Morning report completed")
         except Exception as e:
             logger.error(f"Morning report failed: {e}")
@@ -489,6 +526,31 @@ class Scheduler:
             logger.info("📊 Position monitor cycle completed")
         except Exception as e:
             logger.error(f"📊 Position monitor cycle failed: {e}")
+
+    @_job_wrapper('chart-tracker')
+    async def _run_chart_tracker(self):
+        """Run deterministic chart tracker for NQ (signal-only by default)."""
+        logger.info("📈 Starting chart tracker cycle")
+        try:
+            from tools.circuit_breakers import check_circuit_breakers
+            cb = check_circuit_breakers()
+            if cb["halted"]:
+                logger.warning(f"🛑 Circuit breaker active: {cb['reason']}")
+                return
+            from tools.topstep_chart_tracker import run_chart_tracker_cycle
+            result = await run_chart_tracker_cycle(symbol="NQ", execute=False)
+            signal = result.get("signal", {})
+            direction = signal.get("direction", "none")
+            if direction and direction != "none":
+                logger.info(
+                    f"📈 Chart tracker signal: {direction.upper()} NQ @ {signal.get('entry_price')} "
+                    f"stop={signal.get('stop_loss')} target={signal.get('take_profit')} "
+                    f"score={signal.get('score')}"
+                )
+            else:
+                logger.info(f"📈 Chart tracker: no NQ signal — {signal.get('thesis', '')}")
+        except Exception as e:
+            logger.error(f"📈 Chart tracker cycle failed: {e}")
 
     async def _run_forex_builder(self):
         """Execute forex builder agent."""
@@ -635,6 +697,7 @@ class Scheduler:
         job_map = {
             'daily-research-cycle-v1': self._run_daily_research,
             'morning-report-v1': self._run_morning_report,
+            'morning-report-zynth': self._run_morning_report,
             'continuous-monitoring-v1': self._run_monitoring,
             'prop-firm-scalper-v1': self._run_prop_firm_scalper,
             'dom-inspector-v1': self._run_dom_inspector,
@@ -643,6 +706,7 @@ class Scheduler:
             'options-position-monitor-v1': self._run_options_position_monitor,
             'bb-vwap-reversal-v1': self._run_bb_vwap_reversal_scalper,
             'daily-review-v1': self._run_daily_review,
+            'chart-tracker-v1': self._run_chart_tracker,
         }
 
         if workflow_id in job_map:

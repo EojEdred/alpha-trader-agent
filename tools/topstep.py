@@ -35,10 +35,22 @@ except ImportError:
     TOPSTEP_AVAILABLE = False
     logger.warning("project-x-py not installed. TopstepX integration disabled.")
     ProjectX = None  # type: ignore
-    OrderSide = None  # type: ignore
-    OrderType = None  # type: ignore
     OrderManager = None  # type: ignore
     EventBus = None  # type: ignore
+
+    # Fallback enums keep type annotations and static helpers working when the
+    # official SDK is unavailable (e.g. Python <3.12). They mirror the SDK's
+    # OrderSide/OrderType shape so unit tests and dry-run logic still function.
+    from enum import IntEnum
+
+    class OrderSide(IntEnum):
+        BUY = 1
+        SELL = 2
+
+    class OrderType(IntEnum):
+        MARKET = 1
+        LIMIT = 2
+        STOP = 3
 
 try:
     import jwt
@@ -624,12 +636,17 @@ class TopstepClient:
 
                 await asyncio.sleep(5)
         except asyncio.CancelledError:
-            logger.info("OCO monitor cancelled, cleaning up protective orders")
-            if stop_order_id:
-                await self._cancel_order_by_id(stop_order_id)
-            if target_order_id:
-                await self._cancel_order_by_id(target_order_id)
-            raise
+            # CRITICAL: Do NOT cancel protective orders on task cancellation.
+            # When a one-shot process exits, the event loop cancels all pending
+            # tasks. Cancelling the stop/target here left positions naked and
+            # caused a blown combine. Leave the orders working at the exchange.
+            logger.warning(
+                "OCO monitor task cancelled (process exit?). "
+                "Leaving protective orders in place — stop=%s target=%s",
+                stop_order_id,
+                target_order_id,
+            )
+            return
         except Exception as e:
             logger.error(f"OCO monitor error: {e}")
 

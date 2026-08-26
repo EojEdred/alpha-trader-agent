@@ -245,16 +245,17 @@ class UnifiedExecutionRouter:
             "polymarket": [ExecutionMethod.API, ExecutionMethod.BROWSER],
             "schwab": [ExecutionMethod.API, ExecutionMethod.BROWSER, ExecutionMethod.DESKTOP],
             "interactive_brokers": [ExecutionMethod.API, ExecutionMethod.DESKTOP],
+            "tradovate": [ExecutionMethod.API, ExecutionMethod.DESKTOP, ExecutionMethod.BROWSER],
             
             # Browser-first venues
             "tradingview": [ExecutionMethod.BROWSER, ExecutionMethod.DESKTOP],
             "topstep": [ExecutionMethod.BROWSER, ExecutionMethod.DESKTOP],
-            "apex": [ExecutionMethod.BROWSER, ExecutionMethod.DESKTOP],
+            "apex": [ExecutionMethod.API, ExecutionMethod.BROWSER, ExecutionMethod.DESKTOP],
+            "apexfutures": [ExecutionMethod.API, ExecutionMethod.BROWSER, ExecutionMethod.DESKTOP],
             "leeloo": [ExecutionMethod.BROWSER, ExecutionMethod.DESKTOP],
             
             # Desktop-first venues
             "thinkorswim": [ExecutionMethod.DESKTOP, ExecutionMethod.BROWSER],
-            "tradovate": [ExecutionMethod.DESKTOP, ExecutionMethod.BROWSER],
             "ninjatrader": [ExecutionMethod.DESKTOP],
         }
         
@@ -418,6 +419,52 @@ class UnifiedExecutionRouter:
                         quantity=int(intent.size),
                         side="BUY" if intent.direction == "long" else "SELL",
                         confirmed=getattr(intent, "confirmed", False),
+                    ),
+                    max_retries=2,
+                    base_delay=1.0,
+                    exceptions=(Exception,),
+                )
+                return self._parse_api_result(result, venue, ExecutionMethod.API)
+            
+            elif venue in ("apex", "apexfutures"):
+                # Prefer Tradovate API if configured; otherwise fall back to legacy adapter.
+                from tools.tradovate import get_tradovate_client, tradovate_place_trade
+                tv_client = get_tradovate_client()
+                if tv_client.is_configured:
+                    result = await self._retry_with_backoff(
+                        lambda: tradovate_place_trade(
+                            symbol=intent.symbol.upper(),
+                            side=intent.direction,
+                            quantity=int(intent.size),
+                            order_type="Market",
+                        ),
+                        max_retries=2,
+                        base_delay=1.0,
+                        exceptions=(Exception,),
+                    )
+                else:
+                    from tools.apexfutures import apexfutures_place_trade
+                    result = await self._retry_with_backoff(
+                        lambda: apexfutures_place_trade(
+                            symbol=intent.symbol.upper(),
+                            side="BUY" if intent.direction == "long" else "SELL",
+                            quantity=int(intent.size),
+                            order_type="MARKET",
+                        ),
+                        max_retries=2,
+                        base_delay=1.0,
+                        exceptions=(Exception,),
+                    )
+                return self._parse_api_result(result, venue, ExecutionMethod.API)
+            
+            elif venue == "tradovate":
+                from tools.tradovate import tradovate_place_trade
+                result = await self._retry_with_backoff(
+                    lambda: tradovate_place_trade(
+                        symbol=intent.symbol.upper(),
+                        side=intent.direction,
+                        quantity=int(intent.size),
+                        order_type="Market",
                     ),
                     max_retries=2,
                     base_delay=1.0,

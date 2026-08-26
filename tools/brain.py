@@ -582,10 +582,11 @@ async def deep_research_critique(
 async def risk_governor(
     scalp_decision: Dict = None,
     compliance_status: Dict = None,
+    critique: Dict = None,
     **kwargs
 ) -> Dict:
     """
-    Risk Governor - validates trade decisions against prop firm rules.
+    Risk Governor - validates trade decisions against prop firm rules and AI critique.
     Standalone wrapper for orchestrator.
     """
     if not scalp_decision:
@@ -597,6 +598,16 @@ async def risk_governor(
     # Basic validation — CONSERVATIVE: score must be > 60
     if direction == "none" or score < 60:
         return {"approved": False, "reason": f"Score {score} too low or direction is none"}
+    
+    # Kimi/LLM critique gate
+    if critique and not critique.get("approved", True):
+        reason = f"Kimi critique rejected trade: {critique.get('verdict')} — {critique.get('critique', '')}"
+        logger.warning(f"🧠 {reason}")
+        return {
+            "approved": False,
+            "reason": reason,
+            "critique": critique,
+        }
     
     # Prop firm constraints — read from env so they stay aligned with .env / YAML
     max_contracts = int(os.getenv("TOPSTEP_MAX_CONTRACTS", 1))
@@ -613,7 +624,73 @@ async def risk_governor(
         "max_daily_loss": max_daily_loss,
         "stop_loss": scalp_decision.get("stop_loss") if scalp_decision else None,
         "take_profit": scalp_decision.get("take_profit") if scalp_decision else None,
+        "critique": critique,
     }
+
+
+async def topstep_trade_critique(
+    symbol: str = "NQ",
+    scalp_decision: Dict = None,
+    ohlcv_data: List[Dict] = None,
+    technicals: Dict = None,
+    **kwargs
+) -> Dict:
+    """
+    Kimi/LLM red-team critique of a deterministic chart-tracker signal.
+
+    Returns a verdict dict that the workflow can gate on:
+      {
+        "approved": bool,
+        "verdict": "APPROVE|REJECT|CAUTION",
+        "rating": int,
+        "critique": str,
+        "hidden_risks": list,
+      }
+    """
+    if not scalp_decision or scalp_decision.get("direction", "none") in (None, "none"):
+        return {
+            "approved": False,
+            "verdict": "NO_TRADE",
+            "rating": 0,
+            "critique": "No trade decision to critique",
+            "hidden_risks": [],
+        }
+
+    logger.info(f"🧠 Kimi critique starting for {symbol} {scalp_decision.get('direction')} signal")
+
+    try:
+        critique = await deep_research_critique(
+            symbol=symbol,
+            brain_decision=scalp_decision,
+            ohlcv_data=ohlcv_data,
+            technicals=technicals,
+        )
+        verdict = critique.get("verdict", "CAUTION").upper()
+        approved = verdict == "APPROVE"
+        # Wrap in {"result": ...} so the orchestrator maps the single output
+        # to the full critique dict instead of extracting the "critique" string key.
+        return {
+            "result": {
+                "approved": approved,
+                "verdict": verdict,
+                "rating": critique.get("rating", 5),
+                "critique": critique.get("critique", ""),
+                "hidden_risks": critique.get("hidden_risks", []),
+                "suggested_adjustment": critique.get("suggested_adjustment", ""),
+                "raw_critique": critique,
+            }
+        }
+    except Exception as e:
+        logger.error(f"🧠 Kimi critique failed: {e}")
+        return {
+            "result": {
+                "approved": False,
+                "verdict": "ERROR",
+                "rating": 0,
+                "critique": f"Critique failed: {e}",
+                "hidden_risks": [str(e)],
+            }
+        }
 
 
 async def options_risk_governor(

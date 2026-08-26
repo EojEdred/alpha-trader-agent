@@ -10,6 +10,7 @@ Usage:
 
 import argparse
 import asyncio
+import os
 import signal
 import sys
 from pathlib import Path
@@ -131,6 +132,20 @@ async def main():
         loop.add_signal_handler(sig, signal_handler)
 
     if args.workflow:
+        # Guard: live prop-firm scalper must run inside the long-lived scheduler
+        # so the OCO monitor stays alive. One-shot runs in live mode can leave
+        # positions naked and blow combines.
+        if args.workflow == 'prop-firm-scalper-v1':
+            dry_run = os.getenv("TOPSTEP_DRY_RUN", "false").lower() == "true"
+            if not dry_run and not args.test:
+                logger.error(
+                    "🛑 Refusing one-shot live run of prop-firm-scalper-v1. "
+                    "Live futures trades must run inside the scheduler or supervised loop "
+                    "so protective orders remain managed. Use the scheduler, or set "
+                    "TOPSTEP_DRY_RUN=true for testing."
+                )
+                print("ERROR: One-shot live prop-firm-scalper-v1 is blocked. See log.")
+                sys.exit(1)
         # Run single workflow
         result = await trader.run_workflow(args.workflow)
         print(f"Result: {result.status}")

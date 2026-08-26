@@ -5,6 +5,8 @@ import {
   IconTrendingUp,
   IconActivity,
   IconShieldCheck,
+  IconBrain,
+  IconServer,
 } from '@tabler/icons-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { useAlphaTrader } from '../context/WebSocketContext'
@@ -16,7 +18,7 @@ import StatusBadge from '../components/StatusBadge'
 import { formatCurrency, formatDuration } from '../lib/utils'
 
 export default function Dashboard() {
-  const { status, trades, agents, risk, pnl } = useAlphaTrader()
+  const { status, trades, agents, risk, pnl, researchSummary, dataSources } = useAlphaTrader()
 
   const chartData = trades
     .slice()
@@ -57,6 +59,20 @@ export default function Dashboard() {
           subtext={`${pnl.wins || 0} wins / ${pnl.losses || 0} losses`}
           icon={IconTrendingUp}
           color={(pnl.total_pnl || 0) >= 0 ? 'green' : 'red'}
+        />
+        <StatCard
+          label="Research Regime"
+          value={researchSummary?.regime?.toUpperCase() || 'N/A'}
+          subtext={researchSummary?.latest_agenda || 'No agenda yet'}
+          icon={IconBrain}
+          color="blue"
+        />
+        <StatCard
+          label="Data Sources"
+          value={Object.values(dataSources || {}).filter(Boolean).length}
+          subtext={`of ${Object.keys(dataSources || {}).length} connected`}
+          icon={IconServer}
+          color="green"
         />
       </div>
 

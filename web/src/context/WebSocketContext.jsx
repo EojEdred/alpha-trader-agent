@@ -22,6 +22,8 @@ export function AlphaTraderProvider({ children }) {
   const [workflows, setWorkflows] = useState([])
   const [logs, setLogs] = useState([])
   const [chatMessages, setChatMessages] = useState([])
+  const [researchSummary, setResearchSummary] = useState({})
+  const [dataSources, setDataSources] = useState({})
   const [error, setError] = useState(null)
 
   const wsRef = useRef(null)
@@ -67,6 +69,8 @@ export function AlphaTraderProvider({ children }) {
           if (data.reports) setReports(data.reports)
           if (data.workflows) setWorkflows(data.workflows)
           if (data.logs) setLogs(data.logs)
+          if (data.research_summary) setResearchSummary(data.research_summary)
+          if (data.data_sources) setDataSources(data.data_sources)
         } else if (data.type === 'log') {
           setLogs((prev) => {
             const next = [...prev, data.log]
@@ -141,6 +145,8 @@ export function AlphaTraderProvider({ children }) {
       setWorkflows([])
       setLogs([])
       setChatMessages([])
+      setResearchSummary({})
+      setDataSources({})
     }
   }
 
@@ -193,6 +199,8 @@ export function AlphaTraderProvider({ children }) {
     workflows,
     logs,
     chatMessages,
+    researchSummary,
+    dataSources,
     error,
     login,
     logout,

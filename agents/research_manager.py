@@ -31,13 +31,17 @@ class ResearchManager:
     """
     LLM-powered research manager that synthesizes multiple analyst reports
     into a single investment plan.
+
+    Analyst reports can be weighted by agent type via config['analyst_weights'].
+    Weights inform both the LLM prompt and the fallback voting algorithm.
     """
 
     name = "research_manager"
     description = "Synthesizes analyst reports into an investment plan"
 
-    def __init__(self, model_name: str = "kimi-k2"):
+    def __init__(self, model_name: str = "kimi-k2", config: Optional[Dict[str, Any]] = None):
         self.model_name = model_name
+        self.config = config or {}
         self._llm = None
 
     def _get_llm(self):
@@ -133,7 +137,8 @@ class ResearchManager:
         lines.extend(["", "=== ANALYST REPORTS ===", ""])
 
         for i, report in enumerate(reports, 1):
-            lines.append(f"--- Report {i}: {report.agent_name} ---")
+            weight = self._get_analyst_weight(report.agent_name)
+            lines.append(f"--- Report {i}: {report.agent_name} (weight: {weight:.2f}) ---")
             lines.append(f"Direction: {report.direction.value.upper()}")
             lines.append(f"Confidence: {report.confidence:.0%}")
             lines.append(f"Timeframe: {report.timeframe}")
@@ -215,29 +220,51 @@ class ResearchManager:
             reports_considered=[r.agent_name for r in reports],
         )
 
+    def _get_analyst_weight(self, agent_name: str) -> float:
+        """Return configured weight for an analyst, defaulting to 1.0."""
+        weights = self.config.get("analyst_weights", {})
+        return float(weights.get(agent_name, 1.0))
+
     def _fallback_plan(self, symbol: str, reports: List[AnalystReport]) -> ResearchPlan:
-        """Simple voting fallback when LLM fails."""
+        """Weighted voting fallback when LLM fails."""
+        long_weight = sum(
+            self._get_analyst_weight(r.agent_name) * r.confidence
+            for r in reports if r.direction == Direction.LONG
+        )
+        short_weight = sum(
+            self._get_analyst_weight(r.agent_name) * r.confidence
+            for r in reports if r.direction == Direction.SHORT
+        )
+        neutral_weight = sum(
+            self._get_analyst_weight(r.agent_name) * r.confidence
+            for r in reports if r.direction == Direction.NEUTRAL
+        )
+        total_weight = long_weight + short_weight + neutral_weight
+
         long_count = sum(1 for r in reports if r.direction == Direction.LONG)
         short_count = sum(1 for r in reports if r.direction == Direction.SHORT)
-        total = len(reports)
+        neutral_count = sum(1 for r in reports if r.direction == Direction.NEUTRAL)
 
-        if long_count > short_count and long_count / total > 0.5:
+        if total_weight == 0:
+            rec = Direction.NEUTRAL
+            conf = 0.0
+        elif long_weight > short_weight and long_weight > neutral_weight:
             rec = Direction.LONG
-            conf = long_count / total
-        elif short_count > long_count and short_count / total > 0.5:
+            conf = long_weight / total_weight
+        elif short_weight > long_weight and short_weight > neutral_weight:
             rec = Direction.SHORT
-            conf = short_count / total
+            conf = short_weight / total_weight
         else:
             rec = Direction.NEUTRAL
-            conf = 0.5
+            conf = neutral_weight / total_weight
 
         return ResearchPlan(
             symbol=symbol,
             recommendation=rec,
-            confidence=conf,
-            conviction_level=Confidence.MEDIUM if conf > 0.5 else Confidence.LOW,
-            analyst_agreement=f"{long_count} bullish, {short_count} bearish out of {total}",
-            rationale="Fallback vote due to LLM failure",
+            confidence=round(conf, 2),
+            conviction_level=Confidence.HIGH if conf > 0.8 else Confidence.MEDIUM if conf > 0.5 else Confidence.LOW,
+            analyst_agreement=f"{long_count} bullish, {short_count} bearish, {neutral_count} neutral",
+            rationale="Weighted fallback vote due to LLM failure",
             strategic_actions="Review manually before trading",
             divergent_views=[],
             reports_considered=[r.agent_name for r in reports],

@@ -520,38 +520,6 @@ async def submit_trade(
             size=size,
             price=0.5  # Default price
         )
-    elif venue == "prizepicks":
-        from tools.prizepicks import prizepicks_place_entry
-        # For PrizePicks, we need to format the entry properly
-        selections = [{"player": symbol, "direction": direction}]
-        result = await prizepicks_place_entry(
-            contest_id="default_contest",  # Would need to fetch actual contest ID
-            player_selections=selections
-        )
-    elif venue == "betmgm":
-        from tools.betmgm import betmgm_place_bet
-        bet_data = {
-            "event": symbol,
-            "selection": direction,
-            "stake": size
-        }
-        result = await betmgm_place_bet(bet_data=bet_data)
-    elif venue == "fanduel":
-        from tools.fanduel import fanduel_place_bet
-        bet_data = {
-            "event": symbol,
-            "selection": direction,
-            "stake": size
-        }
-        result = await fanduel_place_bet(bet_data=bet_data)
-    elif venue == "pandafx":
-        from tools.pandafx import pandafx_place_trade
-        result = await pandafx_place_trade(
-            pair=symbol,
-            side=direction,
-            amount=size,
-            order_type="MARKET"
-        )
     elif venue == "apexfutures":
         from tools.apexfutures import apexfutures_place_trade
         result = await apexfutures_place_trade(
@@ -705,38 +673,6 @@ async def get_all_positions() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error fetching Polymarket positions: {e}")
 
-    # Get PrizePicks positions
-    try:
-        from tools.prizepicks import prizepicks_get_positions
-        pp_positions = await prizepicks_get_positions()
-        all_positions.extend(pp_positions)
-    except Exception as e:
-        logger.error(f"Error fetching PrizePicks positions: {e}")
-
-    # Get BetMGM positions
-    try:
-        from tools.betmgm import betmgm_get_positions
-        bm_positions = await betmgm_get_positions()
-        all_positions.extend(bm_positions)
-    except Exception as e:
-        logger.error(f"Error fetching BetMGM positions: {e}")
-
-    # Get FanDuel positions
-    try:
-        from tools.fanduel import fanduel_get_positions
-        fd_positions = await fanduel_get_positions()
-        all_positions.extend(fd_positions)
-    except Exception as e:
-        logger.error(f"Error fetching FanDuel positions: {e}")
-
-    # Get PandaFX positions
-    try:
-        from tools.pandafx import pandafx_get_positions
-        pf_positions = await pandafx_get_positions()
-        all_positions.extend(pf_positions)
-    except Exception as e:
-        logger.error(f"Error fetching PandaFX positions: {e}")
-
     # Get ApexFutures positions
     try:
         from tools.apexfutures import apexfutures_get_positions
@@ -744,6 +680,14 @@ async def get_all_positions() -> Dict[str, Any]:
         all_positions.extend(af_positions)
     except Exception as e:
         logger.error(f"Error fetching ApexFutures positions: {e}")
+
+    # Get Apex/Tradovate positions
+    try:
+        from tools.tradovate import tradovate_get_positions
+        tv_positions = await tradovate_get_positions()
+        all_positions.extend(tv_positions)
+    except Exception as e:
+        logger.error(f"Error fetching Tradovate positions: {e}")
 
     total_value = sum(
         float(p.get("market_value", 0) or 0)

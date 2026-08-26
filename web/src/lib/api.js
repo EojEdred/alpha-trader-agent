@@ -1,4 +1,4 @@
-const API_BASE = ''
+const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 
 async function request(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -45,5 +45,26 @@ export const api = {
   serviceStatus: () => request('/api/service/status'),
   getSettings: () => request('/api/settings'),
   saveSettings: (settings) => request('/api/settings', { method: 'POST', body: JSON.stringify({ settings }) }),
+
+  // Research / analysts / market data / strategies / audit
+  researchAgendas: () => request('/api/research/agendas'),
+  researchAgenda: (name) => request(`/api/research/agendas/${encodeURIComponent(name)}`),
+  runResearch: (symbols) => request('/api/research/run', { method: 'POST', body: JSON.stringify({ symbols }) }),
+  analysts: () => request('/api/analysts'),
+  runAnalyst: (name, symbol) => request(`/api/analysts/${encodeURIComponent(name)}/analyze`, { method: 'POST', body: JSON.stringify({ symbol }) }),
+  marketDataMassive: (symbol) => request(`/api/market-data/${encodeURIComponent(symbol)}/massive`),
+  runAutoHedge: (task) => request('/api/autohedge/run', { method: 'POST', body: JSON.stringify({ task }) }),
+  runValueCell: (symbol) => request('/api/valuecell/analyze', { method: 'POST', body: JSON.stringify({ symbol }) }),
+  audit: (params = {}) => request(`/api/audit?${new URLSearchParams(params).toString()}`),
+
+  // Signal feed / copy-trade
+  signals: (params = {}) => request(`/api/signals?${new URLSearchParams(params).toString()}`),
+  copySignal: (id, body) => request(`/api/signals/${encodeURIComponent(id)}/copy`, { method: 'POST', body: JSON.stringify(body) }),
+
+  // Apex / Tradovate
+  tradovateAccount: () => request('/api/tradovate/account'),
+  tradovatePositions: () => request('/api/tradovate/positions'),
+  tradovateOrders: () => request('/api/tradovate/orders'),
+  tradovatePlaceOrder: (body) => request('/api/tradovate/order', { method: 'POST', body: JSON.stringify(body) }),
 }
 

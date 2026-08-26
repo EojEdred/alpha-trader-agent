@@ -44,7 +44,7 @@ chmod +x scripts/install.sh
 Start the API and web server:
 ```bash
 source venv/bin/activate
-python cli.py watch
+python cli.py dashboard
 ```
 *(If running as a background service, it will already be running on port `8080`)*
 
@@ -91,6 +91,19 @@ python cli.py brief
 
 # Run prediction market arbitrage scanner
 python cli.py arb
+
+# Launch the web dashboard (API + built frontend)
+python cli.py dashboard
+
+# Run research / analyst / audit commands
+python cli.py research run --symbols SPY,QQQ,AAPL
+python cli.py research agendas
+python cli.py analyst list
+python cli.py analyst run technical_analyst SPY
+python cli.py autohedge run "hedge AAPL vs QQQ"
+python cli.py valuecell analyze AAPL
+python cli.py audit list
+python cli.py audit verify
 ```
 
 ---

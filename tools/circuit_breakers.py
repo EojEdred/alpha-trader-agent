@@ -181,3 +181,85 @@ def reset_circuits():
     state["last_check_date"] = _today_str()
     _save_state(state)
     logger.warning("Circuit breakers manually reset")
+
+
+def check_drawdown_breaker(
+    current_equity: float,
+    peak_equity: float,
+    max_drawdown_pct: float = 50.0,
+) -> Dict:
+    """
+    Halt trading if drawdown exceeds max_drawdown_pct.
+
+    Args:
+        current_equity: Current account equity.
+        peak_equity: Highest equity observed.
+        max_drawdown_pct: Max allowed drawdown percent.
+
+    Returns:
+        {"halted": bool, "reason": str, "drawdown_pct": float}
+    """
+    if peak_equity <= 0:
+        return {"halted": False, "reason": "No peak equity", "drawdown_pct": 0.0}
+
+    drawdown_pct = (1 - current_equity / peak_equity) * 100
+    if drawdown_pct >= max_drawdown_pct:
+        logger.error(
+            f"🛑 CIRCUIT BREAKER: Drawdown {drawdown_pct:.2f}% >= {max_drawdown_pct}%. KILL SWITCH."
+        )
+        return {
+            "halted": True,
+            "reason": f"Drawdown kill switch: {drawdown_pct:.2f}%",
+            "drawdown_pct": drawdown_pct,
+        }
+
+    return {"halted": False, "reason": "Drawdown within limits", "drawdown_pct": drawdown_pct}
+
+
+def check_parse_failure_breaker(
+    failures: int,
+    limit: int = 3,
+) -> Dict:
+    """
+    Halt trading after repeated agent parse/risk failures.
+
+    Args:
+        failures: Current consecutive failure count.
+        limit: Failure threshold.
+
+    Returns:
+        {"halted": bool, "reason": str}
+    """
+    if failures >= limit:
+        logger.error(f"🛑 CIRCUIT BREAKER: {failures} parse/risk failures. HALT.")
+        return {
+            "halted": True,
+            "reason": f"Parse/risk failure limit: {failures}/{limit}",
+        }
+    return {"halted": False, "reason": "Parse failures within limit"}
+
+
+def global_kill_switch(hours: int = 24) -> Dict:
+    """
+    Manually or programmatically halt all trading globally.
+
+    Args:
+        hours: How long to halt trading.
+
+    Returns:
+        {"halted": bool, "reason": str}
+    """
+    state = _load_state()
+    _halt_for_hours(state, hours)
+    _save_state(state)
+    logger.error(f"🛑 GLOBAL KILL SWITCH: Trading halted for {hours}h")
+    return {"halted": True, "reason": f"Global kill switch activated ({hours}h)"}
+
+
+def resume_trading() -> Dict:
+    """Clear global halt state."""
+    state = _load_state()
+    state["halted_until"] = None
+    _save_state(state)
+    logger.warning("Trading resumed — circuit breakers reset")
+    return {"halted": False, "reason": "Trading resumed"}

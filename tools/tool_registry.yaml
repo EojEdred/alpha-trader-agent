@@ -557,6 +557,28 @@ tools:
     implementation:
       standalone: tools.topstep::topstep_check_compliance
 
+  - id: topstep_chart_tracker
+    name: Topstep Chart Tracker
+    tier: T1
+    category: strategy
+    provider: topstep
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: check_positions, type: boolean, default: true }
+    implementation:
+      standalone: tools.topstep_chart_tracker::topstep_chart_tracker
+
+  - id: topstep_trade_critique
+    name: Topstep Trade Critique
+    tier: T3
+    category: strategy
+    provider: llm
+    parameters:
+      - { name: symbol, type: string, required: true }
+      - { name: scalp_decision, type: object, required: true }
+    implementation:
+      standalone: tools.brain::topstep_trade_critique
+
   # POLYMARKET TOOLS
   - id: polymarket_place_order
     name: Place Polymarket Order

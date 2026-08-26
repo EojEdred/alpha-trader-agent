@@ -49,3 +49,14 @@ data/
 # Exceptions (tracked files)
 !agent_templates.yaml
 !openapitools.json
+
+# Virtual environments (all variants)
+venv/
+.venv/
+venv*/
+
+# Node / build artifacts
+node_modules/
+web/dist/
+.pytest_cache/
+alpha_trader.egg-info/

@@ -57,6 +57,21 @@ DEEP_ITM_RUNNER_ENABLED = (
 )
 DEEP_ITM_DELTA_THRESHOLD = float(os.getenv("DEEP_ITM_DELTA_THRESHOLD", "0.90"))
 
+# Require the underlying's BB+VWAP+volume setup to still agree before holding
+# a deep-ITM runner. This prevents riding a reversal.
+DEEP_ITM_TREND_CONFIRM = (
+    os.getenv("DEEP_ITM_TREND_CONFIRM", "true").lower() == "true"
+)
+DEEP_ITM_TREND_MIN_STRENGTH = float(
+    os.getenv("DEEP_ITM_TREND_MIN_STRENGTH", "0.4")
+)
+DEEP_ITM_TREND_MIN_VOLUME = float(
+    os.getenv("DEEP_ITM_TREND_MIN_VOLUME", "0.7")
+)
+
+# Use the same timeframe the continuous reversal scalper uses for consistency.
+_REVERSAL_TIMEFRAME = os.getenv("REVERSAL_TIMEFRAME", "5m").lower()
+
 
 def _load_state() -> dict:
     try:
@@ -111,11 +126,95 @@ def _is_deep_itm_runner(pos: dict) -> bool:
         delta = float(quote.get("delta", 0) or 0)
 
         if option_type == "put":
-            return delta <= -DEEP_ITM_DELTA_THRESHOLD
+            deep_itm = delta <= -DEEP_ITM_DELTA_THRESHOLD
         else:
-            return delta >= DEEP_ITM_DELTA_THRESHOLD
+            deep_itm = delta >= DEEP_ITM_DELTA_THRESHOLD
+
+        if not deep_itm or not DEEP_ITM_TREND_CONFIRM:
+            return deep_itm
+
+        return _deep_itm_trend_confirms(pos)
     except Exception as e:
         logger.debug(f"Deep-ITM check failed for {_option_key(pos)}: {e}")
+        return False
+
+
+def _deep_itm_trend_confirms(pos: dict) -> bool:
+    """
+    Confirm the underlying's BB+VWAP+volume setup still agrees with the runner.
+
+    For a deep-ITM put we want the underlying still breaking down (short
+    direction from the `both` strategy). For a deep-ITM call we want it still
+    breaking out (long direction). If the underlying has reversed back inside
+    the bands or reclaimed VWAP, we do not hold the runner.
+    """
+    option_type = pos.get("option_type", "").lower()
+    underlying = pos.get("underlying", "")
+    if option_type not in ("call", "put") or not underlying:
+        return False
+
+    try:
+        import yfinance as yf
+        from tools.analysis import analyze_premarket_reversal_setup
+
+        period_map = {
+            "1m": "1d",
+            "2m": "5d",
+            "5m": "5d",
+            "15m": "5d",
+            "30m": "1mo",
+            "60m": "1mo",
+            "1h": "20d",
+            "90m": "1mo",
+            "1d": "3mo",
+        }
+        period = period_map.get(_REVERSAL_TIMEFRAME, "5d")
+        hist = yf.Ticker(underlying).history(
+            period=period, interval=_REVERSAL_TIMEFRAME, prepost=True
+        )
+        if hist.empty or len(hist) < 25:
+            return False
+
+        candles = [
+            {
+                "timestamp": str(idx),
+                "open": row.Open,
+                "high": row.High,
+                "low": row.Low,
+                "close": row.Close,
+                "volume": int(row.Volume),
+            }
+            for idx, row in hist.iterrows()
+        ]
+
+        r = analyze_premarket_reversal_setup(
+            candles,
+            min_volume_ratio=DEEP_ITM_TREND_MIN_VOLUME,
+            strategy="both",
+        )
+        direction = r.get("direction", "none")
+        strength = r.get("strength", 0.0)
+        volume_ratio = r.get("volume_ratio", 0.0)
+        required = "long" if option_type == "call" else "short"
+
+        confirms = (
+            direction == required
+            and strength >= DEEP_ITM_TREND_MIN_STRENGTH
+            and volume_ratio >= DEEP_ITM_TREND_MIN_VOLUME
+        )
+        if confirms:
+            logger.info(
+                f"🎯 Deep-ITM trend confirms for {underlying}: {direction} "
+                f"strength={strength} vol={volume_ratio}"
+            )
+        else:
+            logger.info(
+                f"🛑 Deep-ITM trend does NOT confirm for {underlying}: "
+                f"{direction} strength={strength} vol={volume_ratio}"
+            )
+        return confirms
+    except Exception as e:
+        logger.debug(f"Deep-ITM trend confirm failed for {underlying}: {e}")
         return False
 
 

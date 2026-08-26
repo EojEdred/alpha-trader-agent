@@ -1,0 +1,7 @@
+tunnel: 6ae4b30d-6abc-4aa0-bf65-4b6d32dbef47
+credentials-file: /Users/joe/Desktop/allternit-workspace/allternit-alpha-trader-agent/.cloudflared/6ae4b30d-6abc-4aa0-bf65-4b6d32dbef47.json
+
+ingress:
+  - hostname: alphatrader-api.allternit.com
+    service: http://localhost:8082
+  - service: http_status:404

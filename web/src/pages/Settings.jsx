@@ -32,6 +32,16 @@ export default function Settings() {
     KALSHI_API_SECRET: '',
     TOPSTEP_USERNAME: '',
     TOPSTEP_PASSWORD: '',
+    TRADOVATE_USERNAME: '',
+    TRADOVATE_PASSWORD: '',
+    TRADOVATE_ACCOUNT_ID: '',
+    TRADOVATE_ACCOUNT_SPEC: '',
+    TRADOVATE_APP_ID: 'AlphaTrader',
+    TRADOVATE_APP_VERSION: '1.0',
+    TRADOVATE_DEVICE_ID: 'alphatrader-device-001',
+    TRADOVATE_CID: '',
+    TRADOVATE_SEC: '',
+    TRADOVATE_DEMO: 'true',
   })
 
   const [loading, setLoading] = useState(true)
@@ -297,7 +307,7 @@ export default function Settings() {
             </div>
             <div>
               <h3 className="font-bold text-sm">Other Platform Integrations</h3>
-              <p className="text-[10px] text-dim uppercase tracking-wider">OANDA, Kalshi, Topstep credentials</p>
+              <p className="text-[10px] text-dim uppercase tracking-wider">OANDA, Kalshi, Topstep, Apex/Tradovate credentials</p>
             </div>
           </div>
           
@@ -318,6 +328,32 @@ export default function Settings() {
             <div className="grid gap-4 md:grid-cols-2">
               {renderInputField('Username', 'TOPSTEP_USERNAME', 'text', 'Topstep username')}
               {renderInputField('Password', 'TOPSTEP_PASSWORD', 'password', 'Topstep password')}
+            </div>
+
+            <h4 className="text-xs font-bold text-dim/80 border-b border-border/20 pb-1 mt-4">Apex / Tradovate (Futures API)</h4>
+            <div className="grid gap-4 md:grid-cols-2">
+              {renderInputField('Username', 'TRADOVATE_USERNAME', 'text', 'Tradovate username')}
+              {renderInputField('Password', 'TRADOVATE_PASSWORD', 'password', 'Tradovate password')}
+              {renderInputField('Account ID', 'TRADOVATE_ACCOUNT_ID', 'text', 'Numeric account ID')}
+              {renderInputField('Account Spec (optional)', 'TRADOVATE_ACCOUNT_SPEC', 'text', 'Usually same as username')}
+              {renderInputField('App ID', 'TRADOVATE_APP_ID', 'text', 'AlphaTrader')}
+              {renderInputField('App Version', 'TRADOVATE_APP_VERSION', 'text', '1.0')}
+              {renderInputField('Device ID', 'TRADOVATE_DEVICE_ID', 'text', 'alphatrader-device-001')}
+              {renderInputField('CID (optional)', 'TRADOVATE_CID', 'text', 'Partner CID')}
+              {renderInputField('SEC (optional)', 'TRADOVATE_SEC', 'password', 'Partner SEC')}
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 pt-2">
+              <div className="space-y-1">
+                <label className="block text-xs font-bold uppercase tracking-wider text-dim">Environment</label>
+                <select
+                  value={settings.TRADOVATE_DEMO || 'true'}
+                  onChange={(e) => handleChange('TRADOVATE_DEMO', e.target.value)}
+                  className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+                >
+                  <option value="true">Demo / Sim</option>
+                  <option value="false">Live</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>

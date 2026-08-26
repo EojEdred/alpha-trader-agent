@@ -17,6 +17,7 @@ import hmac
 import json
 import os
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -39,6 +40,68 @@ from pydantic import BaseModel
 from dexter.engine import TradingEngine
 from dexter.state import AgentStatus, SystemMode, RiskSnapshot, get_state
 from models import TradeStatus
+
+# Research / analyst / strategy / audit integrations
+try:
+    from agents.autohedge_director import AutoHedgeDirector
+except ImportError:
+    AutoHedgeDirector = None  # type: ignore
+
+try:
+    from agents.flow_analyst import FlowAnalyst
+except ImportError:
+    FlowAnalyst = None  # type: ignore
+
+try:
+    from agents.massive_analyst import MassiveAnalyst
+except ImportError:
+    MassiveAnalyst = None  # type: ignore
+
+try:
+    from agents.quant_analyst import QuantAnalyst
+except ImportError:
+    QuantAnalyst = None  # type: ignore
+
+try:
+    from agents.sentiment_analyst import SentimentAnalyst
+except ImportError:
+    SentimentAnalyst = None  # type: ignore
+
+try:
+    from agents.technical_analyst import TechnicalAnalyst
+except ImportError:
+    TechnicalAnalyst = None  # type: ignore
+
+try:
+    from agents.valuecell_analyst import ValueCellAnalyst
+except ImportError:
+    ValueCellAnalyst = None  # type: ignore
+
+try:
+    from market_data.providers.massive_provider import MassiveProvider
+except ImportError:
+    MassiveProvider = None  # type: ignore
+
+try:
+    from tools.audit_ledger import AuditLedger
+except ImportError:
+    AuditLedger = None  # type: ignore
+
+try:
+    from tools.auto_research import AutoResearchEngine
+except ImportError:
+    AutoResearchEngine = None  # type: ignore
+
+try:
+    from tools.phantomflow_parser import PhantomFlowParser
+except ImportError:
+    PhantomFlowParser = None  # type: ignore
+
+try:
+    from tools.signal_feed import SignalFeed, get_signal_feed
+except ImportError:
+    SignalFeed = None  # type: ignore
+    get_signal_feed = None  # type: ignore
 
 
 # Optional imports — wrapped so missing broker deps do not break the API
@@ -335,6 +398,24 @@ async def build_state_payload() -> Dict[str, Any]:
     except Exception as e:
         state.add_log(f"Risk snapshot error: {e}")
 
+    # Research / data-source summary for dashboard
+    research_summary: Dict[str, Any] = {"regime": "neutral", "top_plans": []}
+    try:
+        agendas = (BASE_DIR / "data" / "research").glob("research_agenda_*.md")
+        latest = max(agendas, key=lambda p: p.stat().st_mtime, default=None)
+        if latest:
+            research_summary["latest_agenda"] = latest.name
+    except Exception:
+        pass
+
+    data_sources = {
+        "massive": MassiveProvider is not None and bool(_load_config().get("market_data_apis", {}).get("massive", {}).get("enabled")),
+        "unusual_whales": bool(os.getenv("UNUSUAL_WHALES_API_KEY")),
+        "tradingview_mcp": bool(_load_config().get("mcp_servers", {}).get("tradingview", {}).get("enabled")),
+        "auto_research": AutoResearchEngine is not None,
+        "audit": AuditLedger is not None,
+    }
+
     return {
         "type": "state",
         "status": {
@@ -360,6 +441,8 @@ async def build_state_payload() -> Dict[str, Any]:
         "reports": await _get_reports(),
         "workflows": await _get_workflows(),
         "logs": state.logs[-200:],
+        "research_summary": research_summary,
+        "data_sources": data_sources,
     }
 
 
@@ -488,6 +571,488 @@ class ChatRequest(BaseModel):
 class SettingsRequest(BaseModel):
     settings: Dict[str, str]
 
+
+class ResearchRunRequest(BaseModel):
+    symbols: Optional[List[str]] = None
+
+
+class AnalystRunRequest(BaseModel):
+    symbol: str
+
+
+class AutoHedgeRunRequest(BaseModel):
+    task: str
+
+
+class ValueCellRequest(BaseModel):
+    symbol: str
+
+
+class PhantomFlowWebhookRequest(BaseModel):
+    ticker: Optional[str] = None
+    symbol: Optional[str] = None
+    price: Optional[float] = None
+    close: Optional[float] = None
+    alert: Optional[str] = None
+    message: Optional[str] = None
+    time: Optional[str] = None
+    interval: Optional[str] = None
+
+
+class SignalResponse(BaseModel):
+    id: str
+    timestamp: str
+    source: str
+    symbol: str
+    direction: str
+    confidence: float
+    size: Optional[int] = None
+    entry_price: Optional[float] = None
+    stop_price: Optional[float] = None
+    target_price: Optional[float] = None
+    source_url: Optional[str] = None
+    source_id: Optional[str] = None
+    rationale: str = ""
+    copied: bool = False
+    copied_at: Optional[str] = None
+    intent_id: Optional[str] = None
+
+
+class CopySignalRequest(BaseModel):
+    venue: str = "apex"
+    size: Optional[int] = None
+
+
+# ─── ANALYST REGISTRY ───
+
+def _load_config() -> Dict[str, Any]:
+    import yaml
+
+    config_path = BASE_DIR / "config" / "config.yaml"
+    try:
+        with open(config_path, "r") as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+
+
+def _get_analyst_registry(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Return enabled analyst classes keyed by agent name."""
+    registry: Dict[str, Any] = {}
+    if TechnicalAnalyst is not None:
+        registry["technical_analyst"] = TechnicalAnalyst(config)
+    if FlowAnalyst is not None:
+        registry["flow_analyst"] = FlowAnalyst(config)
+    if SentimentAnalyst is not None:
+        registry["sentiment_analyst"] = SentimentAnalyst(config)
+    if QuantAnalyst is not None:
+        registry["quant_analyst"] = QuantAnalyst(config)
+    if MassiveAnalyst is not None:
+        registry["massive_analyst"] = MassiveAnalyst(config)
+    if ValueCellAnalyst is not None:
+        registry["valuecell_analyst"] = ValueCellAnalyst(config)
+    if AutoHedgeDirector is not None:
+        registry["autohedge_director"] = AutoHedgeDirector(config)
+    return registry
+
+
+# ─── RESEARCH ENDPOINTS ───
+
+@app.get("/api/research/agendas")
+async def research_agendas(_=Depends(require_auth)):
+    """List generated research agendas."""
+    research_dir = BASE_DIR / "data" / "research"
+    files = []
+    if research_dir.exists():
+        for f in sorted(research_dir.glob("research_agenda_*.md"), key=lambda x: x.stat().st_mtime, reverse=True):
+            st = f.stat()
+            files.append({"name": f.name, "mtime": st.st_mtime, "size": st.st_size})
+    return {"agendas": files}
+
+
+@app.get("/api/research/agendas/{agenda_name}")
+async def research_agenda_content(agenda_name: str, _=Depends(require_auth)):
+    """Return the markdown content of a research agenda."""
+    research_dir = BASE_DIR / "data" / "research"
+    safe_name = Path(agenda_name).name
+    path = research_dir / safe_name
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Agenda not found")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not read agenda: {e}")
+    return {"name": safe_name, "content": content}
+
+
+@app.post("/api/research/run")
+async def research_run(req: ResearchRunRequest, _=Depends(require_auth)):
+    """Start an auto-research cycle in the background."""
+    if AutoResearchEngine is None:
+        raise HTTPException(status_code=503, detail="Auto-research engine not available")
+
+    config = _load_config()
+    engine = AutoResearchEngine(config)
+
+    async def _run():
+        try:
+            result = await engine.run_cycle(symbols=req.symbols)
+            get_state().add_log(f"Research cycle complete: {result['summary']}")
+        except Exception as e:
+            logger.error(f"Research cycle failed: {e}")
+            get_state().add_log(f"Research cycle failed: {e}")
+
+    asyncio.create_task(_run())
+    return {"status": "started", "symbols": req.symbols}
+
+
+# ─── ANALYST ENDPOINTS ───
+
+@app.get("/api/analysts")
+async def list_analysts(_=Depends(require_auth)):
+    """List available analysts and their configured weights."""
+    config = _load_config()
+    registry = _get_analyst_registry(config)
+    weights = config.get("analyst_weights", {})
+    return {
+        "analysts": [
+            {
+                "name": name,
+                "description": getattr(inst, "description", ""),
+                "weight": float(weights.get(name, getattr(inst, "default_weight", 1.0))),
+            }
+            for name, inst in registry.items()
+        ]
+    }
+
+
+@app.post("/api/analysts/{analyst_name}/analyze")
+async def run_analyst(analyst_name: str, req: AnalystRunRequest, _=Depends(require_auth)):
+    """Run a single analyst on a symbol and return its report."""
+    config = _load_config()
+    registry = _get_analyst_registry(config)
+    if analyst_name not in registry:
+        raise HTTPException(status_code=404, detail=f"Unknown analyst: {analyst_name}")
+
+    analyst = registry[analyst_name]
+    try:
+        report = await analyst.analyze(req.symbol.upper())
+        return report.model_dump()
+    except Exception as e:
+        logger.error(f"Analyst {analyst_name} failed for {req.symbol}: {e}")
+        raise HTTPException(status_code=500, detail=f"Analyst failed: {e}")
+
+
+# ─── MARKET DATA ENDPOINTS ───
+
+@app.get("/api/market-data/{symbol}/massive")
+async def massive_market_data(symbol: str, _=Depends(require_auth)):
+    """Fetch Massive OHLCV + snapshot for a symbol."""
+    if MassiveProvider is None:
+        raise HTTPException(status_code=503, detail="Massive provider not available")
+
+    config = _load_config()
+    provider = MassiveProvider(config)
+    try:
+        ohlcv, snapshot = await asyncio.gather(
+            provider.get_ohlcv(symbol.upper(), multiplier=1, timespan="day", days=30),
+            provider.get_snapshot(symbol.upper()),
+        )
+    except Exception as e:
+        logger.error(f"Massive market data failed for {symbol}: {e}")
+        raise HTTPException(status_code=502, detail=f"Massive API error: {e}")
+    finally:
+        await provider.close()
+
+    return {
+        "symbol": symbol.upper(),
+        "ohlcv": ohlcv,
+        "snapshot": snapshot,
+        "source": "massive",
+    }
+
+
+# ─── STRATEGY / EXTERNAL AGENT ENDPOINTS ───
+
+@app.post("/api/autohedge/run")
+async def autohedge_run(req: AutoHedgeRunRequest, _=Depends(require_auth)):
+    """Run the AutoHedge adapter or the native AutoHedgeDirector pipeline."""
+    config = _load_config()
+
+    # Prefer the native Alpha Trader pipeline (no extra API dependencies)
+    try:
+        from agents.autohedge_director import AutoHedgeDirector
+
+        director = AutoHedgeDirector(config)
+        result = await director.run_cycle(req.task)
+        return {"status": "ok", "source": "autohedge_director", "result": result}
+    except Exception as e:
+        logger.warning(f"AutoHedgeDirector failed, falling back to adapter: {e}")
+
+    # Fallback to the pip-installed autohedge wrapper
+    try:
+        from tools.autohedge_adapter import AutoHedgeAdapter
+
+        adapter = AutoHedgeAdapter(config)
+        result = await adapter.run(req.task)
+        return result
+    except ImportError:
+        raise HTTPException(status_code=503, detail="AutoHedge integration not available")
+    except Exception as e:
+        logger.error(f"AutoHedge run failed: {e}")
+        raise HTTPException(status_code=500, detail=f"AutoHedge failed: {e}")
+
+
+@app.post("/api/valuecell/analyze")
+async def valuecell_analyze(req: ValueCellRequest, _=Depends(require_auth)):
+    """Run the ValueCell fundamental analyst. Placeholder until analyst is implemented."""
+    try:
+        from agents.valuecell_analyst import ValueCellAnalyst
+    except ImportError:
+        raise HTTPException(status_code=503, detail="ValueCell analyst not available")
+
+    analyst = ValueCellAnalyst(_load_config())
+    try:
+        report = await analyst.analyze(req.symbol.upper())
+        return report.model_dump()
+    except Exception as e:
+        logger.error(f"ValueCell analyst failed for {req.symbol}: {e}")
+        raise HTTPException(status_code=500, detail=f"ValueCell analyst failed: {e}")
+
+
+# ─── SIGNAL FEED / COPY-TRADE ENDPOINTS ───
+
+@app.get("/api/signals", response_model=List[SignalResponse])
+async def list_signals(
+    source: Optional[str] = None,
+    symbol: Optional[str] = None,
+    limit: int = 100,
+    _=Depends(require_auth),
+):
+    """List actionable signals from external platforms and internal analysts."""
+    if SignalFeed is None or get_signal_feed is None:
+        raise HTTPException(status_code=503, detail="Signal feed not available")
+
+    feed = get_signal_feed()
+    try:
+        signals = await feed.list_signals(source=source, symbol=symbol, limit=max(1, min(limit, 500)))
+    except Exception as e:
+        logger.error(f"Signal list failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Signal list failed: {e}")
+
+    return [SignalResponse(**{k: v for k, v in asdict(s).items() if k in SignalResponse.model_fields}) for s in signals]
+
+
+@app.post("/api/signals", response_model=SignalResponse)
+async def create_signal(req: PhantomFlowWebhookRequest, _=Depends(require_auth)):
+    """Manually record a signal (e.g. from a custom webhook or chat)."""
+    if SignalFeed is None or get_signal_feed is None:
+        raise HTTPException(status_code=503, detail="Signal feed not available")
+
+    symbol = (req.symbol or req.ticker or "UNKNOWN").upper()
+    feed = get_signal_feed()
+    try:
+        signal = await feed.record_signal(
+            source="manual",
+            symbol=symbol,
+            direction="neutral",
+            confidence=0.5,
+            entry_price=req.price or req.close,
+            source_id=req.alert,
+            rationale=req.message or "",
+            payload=req.model_dump(exclude_none=True),
+        )
+    except Exception as e:
+        logger.error(f"Signal record failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Signal record failed: {e}")
+
+    return SignalResponse(**{k: v for k, v in asdict(signal).items() if k in SignalResponse.model_fields})
+
+
+@app.post("/api/signals/{signal_id}/copy")
+async def copy_signal(signal_id: str, req: CopySignalRequest, _=Depends(require_auth)):
+    """Copy a signal into a trade intent on the requested venue."""
+    if SignalFeed is None or get_signal_feed is None:
+        raise HTTPException(status_code=503, detail="Signal feed not available")
+
+    feed = get_signal_feed()
+    signal = await feed.get_signal(signal_id)
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    if signal.direction not in ("long", "short"):
+        raise HTTPException(status_code=400, detail="Signal direction is not actionable")
+
+    global _engine
+    state = get_state()
+    if _engine is None:
+        _engine = TradingEngine(dry_run=state.dry_run)
+
+    size = req.size or signal.size or 1
+    try:
+        intent_id = await _engine.place_manual_trade(
+            symbol=signal.symbol,
+            direction=signal.direction,
+            size=size,
+            venue=req.venue,
+        )
+        await feed.mark_copied(signal_id, intent_id=intent_id)
+    except Exception as e:
+        logger.error(f"Copy signal {signal_id} failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Copy trade failed: {e}")
+
+    return {"status": "copied", "signal_id": signal_id, "intent_id": intent_id, "venue": req.venue}
+
+
+# ─── TRADOVATE / APEX ENDPOINTS ───
+
+@app.get("/api/tradovate/account")
+async def tradovate_account_summary(_=Depends(require_auth)):
+    """Get Apex/Tradovate account summary and cash balance."""
+    try:
+        from tools.tradovate import tradovate_get_account_summary
+        summary = await tradovate_get_account_summary()
+        if not summary:
+            raise HTTPException(status_code=503, detail="Tradovate not configured")
+        return summary
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Tradovate account summary failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Tradovate account summary failed: {e}")
+
+
+@app.get("/api/tradovate/positions")
+async def tradovate_positions(_=Depends(require_auth)):
+    """Get Apex/Tradovate positions."""
+    try:
+        from tools.tradovate import tradovate_get_positions
+        return {"positions": await tradovate_get_positions()}
+    except Exception as e:
+        logger.error(f"Tradovate positions failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Tradovate positions failed: {e}")
+
+
+@app.get("/api/tradovate/orders")
+async def tradovate_orders(_=Depends(require_auth)):
+    """Get Apex/Tradovate working orders."""
+    try:
+        from tools.tradovate import tradovate_get_orders
+        return {"orders": await tradovate_get_orders()}
+    except Exception as e:
+        logger.error(f"Tradovate orders failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Tradovate orders failed: {e}")
+
+
+class TradovateOrderRequest(BaseModel):
+    symbol: str
+    side: str
+    quantity: int
+    order_type: str = "Market"
+    price: Optional[float] = None
+    stop_price: Optional[float] = None
+
+
+@app.post("/api/tradovate/order")
+async def tradovate_place_order_api(req: TradovateOrderRequest, _=Depends(require_auth)):
+    """Place an order through Apex/Tradovate."""
+    try:
+        from tools.tradovate import tradovate_place_trade
+        result = await tradovate_place_trade(
+            symbol=req.symbol.upper(),
+            side=req.side,
+            quantity=req.quantity,
+            order_type=req.order_type,
+            price=req.price,
+            stop_price=req.stop_price,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Tradovate order failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Tradovate order failed: {e}")
+
+
+# ─── AUDIT ENDPOINTS ───
+
+@app.get("/api/audit")
+async def audit_records(
+    type: Optional[str] = None,
+    limit: int = 100,
+    _=Depends(require_auth),
+):
+    """Query the tamper-evident audit ledger."""
+    if AuditLedger is None:
+        raise HTTPException(status_code=503, detail="Audit ledger not available")
+
+    ledger = AuditLedger()
+    try:
+        records = ledger.get_records(record_type=type, limit=max(1, min(limit, 1000)))
+        return {
+            "records": [
+                {
+                    "seq": r.seq,
+                    "timestamp": r.timestamp,
+                    "type": r.type,
+                    "payload": r.payload,
+                    "previous_hash": r.previous_hash,
+                    "hash": r.hash,
+                }
+                for r in records
+            ],
+            "integrity": ledger.verify(),
+        }
+    except Exception as e:
+        logger.error(f"Audit query failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Audit query failed: {e}")
+
+
+# ─── PHANTOMFLOW WEBHOOK ───
+
+@app.post("/api/webhook/phantomflow")
+async def phantomflow_webhook(req: PhantomFlowWebhookRequest, _=Depends(require_auth)):
+    """Receive and parse a PhantomFlow TradingView webhook alert."""
+    if PhantomFlowParser is None:
+        raise HTTPException(status_code=503, detail="PhantomFlow parser not available")
+
+    payload = req.model_dump(exclude_none=True)
+    config = _load_config()
+    parser = PhantomFlowParser(config)
+    try:
+        intent = await parser.parse_webhook(payload)
+    except Exception as e:
+        logger.error(f"PhantomFlow webhook parse failed: {e}")
+        raise HTTPException(status_code=400, detail=f"Parse failed: {e}")
+
+    if intent is None:
+        return {"status": "ignored", "reason": "Unrecognized or non-actionable signal"}
+
+    # Record in the signal feed so it appears on the Copy Trade page
+    if SignalFeed is not None and get_signal_feed is not None:
+        try:
+            feed = get_signal_feed()
+            await feed.record_signal(
+                source="phantomflow",
+                symbol=intent.symbol,
+                direction=intent.direction,
+                confidence=intent.conviction,
+                size=int(intent.size) if intent.size is not None else None,
+                entry_price=intent.entry_price if intent.entry_price > 0 else None,
+                stop_price=intent.stop_price if intent.stop_price > 0 else None,
+                target_price=intent.target_price if intent.target_price > 0 else None,
+                source_id=req.alert,
+                rationale=req.message or req.alert or "PhantomFlow webhook",
+                payload=payload,
+            )
+        except Exception as e:
+            logger.warning(f"PhantomFlow signal record failed: {e}")
+
+    # Submit as a pending intent via the trading engine
+    global _engine
+    state = get_state()
+    if _engine is None:
+        _engine = TradingEngine(dry_run=state.dry_run)
+    await _engine.submit_intent(intent)
+    return {"status": "received", "intent_id": intent.id, "intent": intent.to_dict()}
 
 
 # ─── STATIC FILES ───
@@ -918,7 +1483,17 @@ async def get_settings(_=Depends(require_auth)):
         "KALSHI_API_KEY",
         "KALSHI_API_SECRET",
         "TOPSTEP_USERNAME",
-        "TOPSTEP_PASSWORD"
+        "TOPSTEP_PASSWORD",
+        "TRADOVATE_USERNAME",
+        "TRADOVATE_PASSWORD",
+        "TRADOVATE_ACCOUNT_ID",
+        "TRADOVATE_ACCOUNT_SPEC",
+        "TRADOVATE_APP_ID",
+        "TRADOVATE_APP_VERSION",
+        "TRADOVATE_DEVICE_ID",
+        "TRADOVATE_CID",
+        "TRADOVATE_SEC",
+        "TRADOVATE_DEMO",
     ]
     from dotenv import dotenv_values
     file_vals = {}
@@ -1166,18 +1741,19 @@ async def handle_chat(message: str) -> str:
 # Register explicit client-side routes so refresh/deep-linking works.
 # StaticFiles is mounted last to serve assets and the root index.html.
 
-_SPA_ROUTES = ["/", "/dashboard", "/trades", "/positions", "/pending", "/chat", "/logs", "/reports", "/control", "/settings"]
+_SPA_ROUTES = ["/", "/dashboard", "/trades", "/positions", "/pending", "/chat", "/logs", "/reports", "/control", "/settings", "/research", "/analysts", "/market-data", "/strategies", "/audit", "/signals", "/apex"]
 
 if DIST_DIR.exists():
-    _index_html = (DIST_DIR / "index.html").read_text()
-
-    def _make_spa_handler(html: str):
+    def _make_spa_handler():
         async def handler():
+            # Read fresh index.html on every request so rebuilds are picked up
+            # without restarting the API server.
+            html = (DIST_DIR / "index.html").read_text()
             return HTMLResponse(content=html)
         return handler
 
     for _route in _SPA_ROUTES:
-        app.get(_route, response_class=HTMLResponse)(_make_spa_handler(_index_html))
+        app.get(_route, response_class=HTMLResponse)(_make_spa_handler())
 
     # Static assets and root fallback
     app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="static")

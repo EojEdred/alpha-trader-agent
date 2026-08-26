@@ -56,15 +56,17 @@ workflow:
       outputs: [technicals]
       parameters: { indicators: ["rsi_14", "sma_20"] }
 
-    - id: brain-inference
-      name: Brain Scalp Decision
+    - id: chart-tracker
+      name: Topstep Chart Tracker
       phase: Think
-      skill_id: reason_about_setup
-      description: LLM decides on scalp opportunity
-      inputs: [ohlcv_data, technicals, compliance_status]
+      skill_id: topstep_chart_tracker
+      description: Deterministic API-driven chart analysis and signal generation
+      inputs: [ohlcv_data, compliance_status]
       outputs: [scalp_decision]
-      tools: [reason_about_setup]
-      parameters: { symbol: "NQ" }
+      tools: [topstep_chart_tracker]
+      parameters:
+        symbol: "NQ"
+        check_positions: true
 
     - id: risk-governor
       name: Risk Governor Validation
@@ -79,13 +81,10 @@ workflow:
       name: Execute Prop Firm Order
       phase: Execute
       skill_id: propfirm_place_order
-      description: Place order via browser agent
+      description: Place order via ProjectX API (levels come from scalp_decision)
       inputs: [risk_decision, scalp_decision]
       outputs: [execution_result]
       tools: [propfirm_place_order]
-      parameters:
-        stop_loss: "{{scalp_decision.stop_loss}}"
-        take_profit: "{{scalp_decision.take_profit}}"
       constraints:
         time_budget: 45
 
@@ -113,8 +112,8 @@ workflow:
     - { from: topstep-consistency-check, to: prop-firm-compliance-check, condition: "consistency_status.can_trade == true" }
     - { from: prop-firm-compliance-check, to: fetch-futures-data }
     - { from: fetch-futures-data, to: calculate-microstructure }
-    - { from: calculate-microstructure, to: brain-inference }
-    - { from: brain-inference, to: risk-governor }
+    - { from: calculate-microstructure, to: chart-tracker }
+    - { from: chart-tracker, to: risk-governor }
     - { from: risk-governor, to: execute-prop-order, condition: "risk_decision.approved == true" }
     - { from: execute-prop-order, to: visual-verify-fill }
     - { from: visual-verify-fill, to: log-scalp }

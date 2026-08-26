@@ -132,18 +132,12 @@ playwright install chromium
 if [ ! -f "$PROJECT_DIR/.env" ]; then
     log "Creating .env template..."
     cat > "$PROJECT_DIR/.env" <<'ENV'
-# Charles Schwab API Credentials
-SCHWAB_APP_KEY=
-SCHWAB_APP_SECRET=
-SCHWAB_REDIRECT_URI=https://your-domain-or-tunnel/callback
-SCHWAB_TOKEN_PATH=schwab_token.json
-
 # Web dashboard password
 DEXTER_WEB_PASSWORD=alpha2026
 
 # Trading mode
 ALPHA_TRADER_AUTO_START=true
-ALPHA_TRADER_DRY_RUN=false
+ALPHA_TRADER_DRY_RUN=true
 
 # AI provider for chat/brain (kimi, kimi-api, codex-cli, gemini-cli)
 # For VPS/cloud installs, set KIMI_API_KEY so the device-bound OAuth token is not required.
@@ -153,13 +147,32 @@ KIMI_CLI_PATH=/root/.kimi-code/bin/kimi
 # KIMI_API_BASE=https://api.moonshot.ai/v1
 # KIMI_API_MODEL=kimi-k2
 
+# Charles Schwab API Credentials
+SCHWAB_APP_KEY=
+SCHWAB_APP_SECRET=
+SCHWAB_REDIRECT_URI=https://your-domain-or-tunnel/callback
+SCHWAB_TOKEN_PATH=schwab_token.json
+
 # Optional venue credentials (add as needed)
 # OANDA_API_KEY=
+# OANDA_ACCOUNT_ID=
 # TOPSTEP_USERNAME=
 # TOPSTEP_PASSWORD=
 # KALSHI_API_KEY=
 # KALSHI_API_SECRET=
 # POLYGON_API_KEY=
+
+# Apex / Tradovate funded futures
+TRADOVATE_USERNAME=
+TRADOVATE_PASSWORD=
+TRADOVATE_ACCOUNT_ID=
+TRADOVATE_ACCOUNT_SPEC=
+TRADOVATE_APP_ID=AlphaTrader
+TRADOVATE_APP_VERSION=1.0
+TRADOVATE_DEVICE_ID=alphatrader-device-001
+TRADOVATE_CID=
+TRADOVATE_SEC=
+TRADOVATE_DEMO=true
 ENV
     warn "Created .env template. Please edit it and add your API credentials."
 else
@@ -187,12 +200,13 @@ if [ "$OS" == "macos" ]; then
     <key>ProgramArguments</key>
     <array>
         <string>${VENV_DIR}/bin/python</string>
-        <string>${PROJECT_DIR}/cli.py</string>
-        <string>serve</string>
+        <string>${VENV_DIR}/bin/alphatrader</string>
+        <string>dashboard</string>
         <string>--host</string>
-        <string>0.0.0.0</string>
+        <string>127.0.0.1</string>
         <string>--port</string>
-        <string>8080</string>
+        <string>8082</string>
+        <string>--no-open</string>
     </array>
     <key>WorkingDirectory</key>
     <string>${PROJECT_DIR}</string>
@@ -252,7 +266,7 @@ Environment="ALPHA_TRADER_AUTO_START=true"
 Environment="ALPHA_TRADER_DRY_RUN=false"
 Environment="LLM_PROVIDER=kimi"
 Environment="KIMI_CLI_PATH=/root/.kimi-code/bin/kimi"
-ExecStart=${VENV_DIR}/bin/python ${PROJECT_DIR}/cli.py serve --host 0.0.0.0 --port 8080
+ExecStart=${VENV_DIR}/bin/alphatrader dashboard --host 127.0.0.1 --port 8082 --no-open
 Restart=always
 RestartSec=10
 
@@ -274,8 +288,16 @@ log "Next steps:"
 log "  1. Edit ${PROJECT_DIR}/.env with your credentials"
 log "  2. Authenticate Schwab and place schwab_token.json in ${PROJECT_DIR}/"
 log "  3. Start the service (or it may already be running on macOS)"
-log "  4. Open dashboard: http://localhost:8080/"
+log "  4. Open local dashboard: http://localhost:8082/"
+log ""
+log "Cloudflare hosting:"
+log "  1. Expose API: ./scripts/setup-cloudflare-tunnel.sh alphatrader-api"
+log "  2. Deploy UI:  CLOUDFLARE_API_TOKEN=... VITE_API_BASE_URL=https://alphatrader-api.allternit.com ./scripts/deploy-cloudflare-pages.sh"
+log "  3. See DEPLOY.md for Cloudflare Access lockdown."
 log ""
 log "Commands:"
-log "  ${VENV_DIR}/bin/alphatrader serve       # Run dashboard manually"
-log "  ${VENV_DIR}/bin/alphatrader dashboard   # Run TUI dashboard"
+log "  ${VENV_DIR}/bin/alphatrader dashboard   # Run web dashboard"
+log "  ${VENV_DIR}/bin/alphatrader tui         # Run TUI dashboard"
+log "  ${VENV_DIR}/bin/alphatrader research run --symbols SPY,QQQ,AAPL"
+log "  ${VENV_DIR}/bin/alphatrader analyst list"
+log "  ${VENV_DIR}/bin/alphatrader audit verify"

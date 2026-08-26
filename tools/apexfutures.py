@@ -5,7 +5,6 @@ For funded futures trading - AUTO execution mode.
 """
 
 import os
-import json
 from datetime import datetime
 from typing import Dict, List, Optional
 from loguru import logger
@@ -13,15 +12,20 @@ import aiohttp
 
 
 class ApexFuturesClient:
-    """Apex Funded Futures API client."""
+    """Apex Funded Futures API client.
+
+    Supports both the .env.example naming (APEX_*) and the older
+    APEXFUTURES_* naming for backwards compatibility.
+    """
 
     def __init__(self):
-        self.api_key = os.getenv('APEXFUTURES_API_KEY')
-        self.base_url = os.getenv('APEXFUTURES_BASE_URL', 'https://api.apexfutures.com')
-        self.username = os.getenv('APEXFUTURES_USERNAME')
-        self.password = os.getenv('APEXFUTURES_PASSWORD')
-        self.account_id = os.getenv('APEXFUTURES_ACCOUNT_ID')
-        
+        self.api_key = os.getenv('APEXFUTURES_API_KEY') or os.getenv('APEX_API_KEY')
+        self.base_url = os.getenv('APEXFUTURES_BASE_URL') or os.getenv('APEX_BASE_URL', 'https://api.apexfutures.com')
+        self.username = os.getenv('APEXFUTURES_USERNAME') or os.getenv('APEX_USERNAME')
+        self.password = os.getenv('APEXFUTURES_PASSWORD') or os.getenv('APEX_PASSWORD')
+        self.account_id = os.getenv('APEXFUTURES_ACCOUNT_ID') or os.getenv('APEX_ACCOUNT_ID')
+        self._warned_once = False
+
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -29,15 +33,32 @@ class ApexFuturesClient:
             "Accept": "application/json"
         }
 
+    @property
+    def is_configured(self) -> bool:
+        """Return True when the minimum credentials are present."""
+        return bool(self.api_key and self.username and self.password and self.account_id)
+
+    def _warn_if_unconfigured(self) -> None:
+        if not self.is_configured and not self._warned_once:
+            logger.warning(
+                "ApexFutures credentials not configured. "
+                "Set APEX_USERNAME, APEX_PASSWORD, APEX_ACCOUNT_ID and "
+                "APEXFUTURES_API_KEY (or APEX_API_KEY) in .env to enable Apex."
+            )
+            self._warned_once = True
+
     async def authenticate(self) -> bool:
         """Authenticate with Apex Futures API."""
+        self._warn_if_unconfigured()
+        if not self.is_configured:
+            return False
         try:
             auth_data = {
                 "username": self.username,
                 "password": self.password,
                 "account_id": self.account_id
             }
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{self.base_url}/auth/login",
@@ -62,6 +83,9 @@ class ApexFuturesClient:
 
     async def get_contracts(self) -> List[Dict]:
         """Get available futures contracts."""
+        self._warn_if_unconfigured()
+        if not self.is_configured:
+            return []
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -80,11 +104,14 @@ class ApexFuturesClient:
 
     async def get_quotes(self, symbols: List[str] = None) -> Dict:
         """Get current quotes for futures contracts."""
+        self._warn_if_unconfigured()
+        if not self.is_configured:
+            return {}
         try:
             params = {}
             if symbols:
                 params['symbols'] = ','.join(symbols)
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{self.base_url}/quotes",
@@ -101,9 +128,13 @@ class ApexFuturesClient:
             logger.error(f"ApexFutures quotes error: {e}")
             return {}
 
-    async def place_trade(self, symbol: str, side: str, quantity: int, 
+    async def place_trade(self, symbol: str, side: str, quantity: int,
                          order_type: str = "MARKET", price: float = None) -> Dict:
         """Place a futures trade."""
+        self._warn_if_unconfigured()
+        if not self.is_configured:
+            return {'error': 'ApexFutures not configured', 'status': 'failed'}
+
         logger.info(f"ApexFutures: Attempting to place {side} trade for {quantity} {symbol}")
 
         try:
@@ -114,7 +145,7 @@ class ApexFuturesClient:
                 "quantity": quantity,
                 "type": order_type.upper(),  # MARKET, LIMIT, STOP, etc.
             }
-            
+
             if order_type.upper() != "MARKET" and price:
                 trade_data["price"] = price
 
@@ -146,6 +177,9 @@ class ApexFuturesClient:
 
     async def get_positions(self) -> List[Dict]:
         """Get current futures positions."""
+        self._warn_if_unconfigured()
+        if not self.is_configured:
+            return []
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -155,7 +189,7 @@ class ApexFuturesClient:
                     if resp.status == 200:
                         data = await resp.json()
                         positions = []
-                        
+
                         for pos in data.get('positions', []):
                             positions.append({
                                 'venue': 'ApexFutures',
@@ -167,7 +201,7 @@ class ApexFuturesClient:
                                 'pnl': pos.get('pnl'),
                                 'pnl_pct': pos.get('pnl_pct')
                             })
-                        
+
                         return positions
                     else:
                         logger.error(f"ApexFutures positions error: {resp.status}")
@@ -178,6 +212,9 @@ class ApexFuturesClient:
 
     async def get_account_info(self) -> Dict:
         """Get account information."""
+        self._warn_if_unconfigured()
+        if not self.is_configured:
+            return {}
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -195,6 +232,9 @@ class ApexFuturesClient:
 
     async def get_pnl_summary(self) -> Dict:
         """Get P&L summary for the account."""
+        self._warn_if_unconfigured()
+        if not self.is_configured:
+            return {}
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -234,7 +274,7 @@ async def apexfutures_get_quotes(symbols: List[str] = None) -> Dict:
     return {'quotes': quotes}
 
 
-async def apexfutures_place_trade(symbol: str, side: str, quantity: int, 
+async def apexfutures_place_trade(symbol: str, side: str, quantity: int,
                                  order_type: str = "MARKET", price: float = None) -> Dict:
     """Place ApexFutures trade."""
     return await get_apexfutures_client().place_trade(symbol, side, quantity, order_type, price)

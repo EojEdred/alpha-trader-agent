@@ -17,7 +17,7 @@ load_dotenv()
 try:
     import schwab
     from schwab.client import Client
-    from schwab.auth import client_from_token_file, client_from_manual_flow
+    from schwab.auth import client_from_token_file, client_from_login_flow
     SCHWAB_AVAILABLE = True
 except ImportError:
     SCHWAB_AVAILABLE = False
@@ -65,11 +65,13 @@ class SchwabClient:
             return
 
         try:
-            self.client = client_from_manual_flow(
-                self.app_key, 
-                self.app_secret, 
-                self.redirect_uri, 
-                self.token_path
+            logger.info("Opening browser for Schwab OAuth login flow...")
+            self.client = client_from_login_flow(
+                self.app_key,
+                self.app_secret,
+                self.redirect_uri,
+                self.token_path,
+                interactive=False
             )
             logger.info("Schwab authentication successful")
             return True

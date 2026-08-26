@@ -11,6 +11,13 @@ import Logs from './pages/Logs'
 import Reports from './pages/Reports'
 import Control from './pages/Control'
 import Settings from './pages/Settings'
+import Research from './pages/Research'
+import Analysts from './pages/Analysts'
+import MarketData from './pages/MarketData'
+import Strategies from './pages/Strategies'
+import Audit from './pages/Audit'
+import Signals from './pages/Signals'
+import Tradovate from './pages/Tradovate'
 
 function AppRoutes() {
   const { authenticated, checkingAuth } = useAlphaTrader()
@@ -39,6 +46,13 @@ function AppRoutes() {
         <Route path="/reports" element={<Reports />} />
         <Route path="/control" element={<Control />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/research" element={<Research />} />
+        <Route path="/analysts" element={<Analysts />} />
+        <Route path="/market-data" element={<MarketData />} />
+        <Route path="/strategies" element={<Strategies />} />
+        <Route path="/audit" element={<Audit />} />
+        <Route path="/signals" element={<Signals />} />
+        <Route path="/apex" element={<Tradovate />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

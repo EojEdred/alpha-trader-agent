@@ -35,16 +35,18 @@ from textual.color import Color
 from dexter.state import SystemState, get_state, AgentStatus, SystemMode
 
 
-# ─── COLOR THEME ───
-COLOR_BG = "#0a0e1a"
-COLOR_PANEL = "#111827"
-COLOR_BORDER = "#1f2937"
-COLOR_GREEN = "#22c55e"
-COLOR_RED = "#ef4444"
-COLOR_YELLOW = "#eab308"
-COLOR_BLUE = "#3b82f6"
-COLOR_TEXT = "#e5e7eb"
-COLOR_DIM = "#6b7280"
+# ─── APPLE-INSPIRED LIGHT THEME ───
+COLOR_BG = "#F5F5F0"        # eggshell white
+COLOR_PANEL = "#FAFAF8"     # warm white panels
+COLOR_SURFACE = "#FFFFFF"   # pure white surfaces
+COLOR_BORDER = "#D1D1D6"    # light Apple gray
+COLOR_TEXT = "#1C1C1E"      # near black
+COLOR_DIM = "#8E8E93"       # secondary gray
+COLOR_GREEN = "#34C759"     # Apple green
+COLOR_RED = "#FF3B30"       # Apple red
+COLOR_YELLOW = "#FFCC00"    # Apple yellow
+COLOR_BLUE = "#007AFF"      # Apple blue
+COLOR_ORANGE = "#FF9500"
 
 
 class StatusBadge(Widget):
@@ -64,10 +66,15 @@ class AgentPanel(Widget):
 
     DEFAULT_CSS = """
     AgentPanel {
-        border: solid $border;
+        border: round $border;
         background: $panel;
+        color: $text;
         padding: 1;
         height: 100%;
+    }
+    AgentPanel .panel-title {
+        color: $text;
+        text-style: bold;
     }
     AgentPanel .agent-row {
         height: auto;
@@ -83,8 +90,10 @@ class AgentPanel(Widget):
     AgentPanel .agent-action {
         color: $dim;
     }
+    AgentPanel Rule {
+        color: $border;
+    }
     """
-
     def compose(self) -> ComposeResult:
         yield Label("[b]AGENTS[/b]", classes="panel-title")
         yield Rule()
@@ -109,8 +118,8 @@ class AgentPanel(Widget):
             icon = {
                 AgentStatus.IDLE: "●",
                 AgentStatus.BUSY: "◐",
-                AgentStatus.ERROR: "✖",
-                AgentStatus.OFFLINE: "○",
+                AgentStatus.ERROR: "✕",
+                AgentStatus.OFFLINE: "◦",
             }.get(agent.status, "?")
 
             action = agent.last_action or "—"
@@ -130,13 +139,29 @@ class TradePanel(Widget):
 
     DEFAULT_CSS = """
     TradePanel {
-        border: solid $border;
+        border: round $border;
         background: $panel;
+        color: $text;
         padding: 1;
         height: 100%;
     }
+    TradePanel .panel-title {
+        color: $text;
+        text-style: bold;
+    }
+    TradePanel DataTable {
+        background: $panel;
+        color: $text;
+    }
+    TradePanel DataTable > .datatable--header {
+        background: $surface;
+        color: $text;
+        text-style: bold;
+    }
+    TradePanel Rule {
+        color: $border;
+    }
     """
-
     def compose(self) -> ComposeResult:
         yield Label("[b]TRADES[/b]", classes="panel-title")
         yield Rule()
@@ -176,13 +201,23 @@ class RiskPanel(Widget):
 
     DEFAULT_CSS = """
     RiskPanel {
-        border: solid $border;
+        border: round $border;
         background: $panel;
+        color: $text;
         padding: 1;
         height: 100%;
     }
+    RiskPanel .panel-title {
+        color: $text;
+        text-style: bold;
+    }
+    RiskPanel .risk-content {
+        color: $text;
+    }
+    RiskPanel Rule {
+        color: $border;
+    }
     """
-
     def compose(self) -> ComposeResult:
         yield Label("[b]RISK & LIMITS[/b]", classes="panel-title")
         yield Rule()
@@ -228,13 +263,24 @@ class LogPanel(Widget):
 
     DEFAULT_CSS = """
     LogPanel {
-        border: solid $border;
+        border: round $border;
         background: $panel;
+        color: $text;
         padding: 1;
         height: 100%;
     }
+    LogPanel .panel-title {
+        color: $text;
+        text-style: bold;
+    }
+    LogPanel .log-view {
+        background: $panel;
+        color: $text;
+    }
+    LogPanel Rule {
+        color: $border;
+    }
     """
-
     def compose(self) -> ComposeResult:
         yield Label("[b]LOGS[/b]", classes="panel-title")
         yield Rule()
@@ -268,12 +314,28 @@ class InfoBar(Widget):
     DEFAULT_CSS = """
     InfoBar {
         height: 3;
-        background: $primary;
+        background: $surface;
         color: $text;
+        border-bottom: solid $border;
         padding: 0 2;
     }
+    InfoBar .brand {
+        color: $primary;
+        text-style: bold;
+    }
+    InfoBar .spacer {
+        width: 1fr;
+    }
+    InfoBar .mode {
+        width: auto;
+        margin: 0 2;
+        color: $text;
+    }
+    InfoBar .uptime {
+        width: auto;
+        color: $dim;
+    }
     """
-
     mode_color = reactive(COLOR_DIM)
     uptime = reactive("00:00:00")
     dry_run = reactive(True)
@@ -312,7 +374,7 @@ class InfoBar(Widget):
         uptime = state.uptime_seconds
         hours, rem = divmod(int(uptime), 3600)
         minutes, seconds = divmod(rem, 60)
-        self._uptime.update(f"⏱ {hours:02d}:{minutes:02d}:{seconds:02d}")
+        self._uptime.update(f"◷ {hours:02d}:{minutes:02d}:{seconds:02d}")
 
 
 class CommandBar(Widget):
@@ -323,7 +385,11 @@ class CommandBar(Widget):
         height: 3;
         background: $surface;
         color: $text;
+        border-top: solid $border;
         padding: 0 2;
+    }
+    CommandBar .commands {
+        color: $dim;
     }
     """
 
@@ -340,6 +406,7 @@ class AlphaTraderDashboard(App):
     CSS = f"""
     Screen {{
         background: {COLOR_BG};
+        color: {COLOR_TEXT};
     }}
     .panel-title {{
         text-style: bold;
@@ -360,8 +427,16 @@ class AlphaTraderDashboard(App):
         width: auto;
         color: {COLOR_DIM};
     }}
+    Footer {{
+        background: {COLOR_SURFACE};
+        color: {COLOR_TEXT};
+        border-top: solid {COLOR_BORDER};
+    }}
+    Footer > .footer--key {{
+        color: {COLOR_TEXT};
+        background: {COLOR_PANEL};
+    }}
     """
-
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("r", "run", "Run"),

@@ -20,7 +20,14 @@ from rich import print as rprint
 from datetime import datetime
 import asyncio
 import os
-from typing import List
+import sys
+import subprocess
+import webbrowser
+import time
+import atexit
+import json
+from pathlib import Path
+from typing import List, Optional
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -79,6 +86,7 @@ def run(
 def agent_cycle(
     dry_run: bool = typer.Option(False, "--dry-run", help="Run in simulation mode"),
     live: bool = typer.Option(False, "--live", help="Run in live trading mode"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip interactive confirmation for live runs"),
 ):
     """Manually trigger one autonomous agent cycle (Scan -> Reason -> Execute)."""
     from standalone.main import AlphaTrader
@@ -87,9 +95,10 @@ def agent_cycle(
     is_live = live and not dry_run
 
     if is_live:
-        confirm = typer.confirm("⚠️ You are about to run a LIVE agent cycle. Continue?")
-        if not confirm:
-            return
+        if not yes:
+            confirm = typer.confirm("⚠️ You are about to run a LIVE agent cycle. Continue?")
+            if not confirm:
+                return
     else:
         # Default to dry run for safety and automation
         os.environ["DRY_RUN"] = "true"
@@ -245,7 +254,8 @@ def positions():
     """Show current open positions across all venues."""
     from tools.execution import get_all_positions
 
-    positions = asyncio.run(get_all_positions())
+    positions_data = asyncio.run(get_all_positions())
+    positions = positions_data.get("positions", []) if isinstance(positions_data, dict) else positions_data
 
     if not positions:
         console.print("[yellow]No open positions.[/yellow]")
@@ -261,15 +271,16 @@ def positions():
     table.add_column("P&L", justify="right")
 
     for pos in positions:
-        pnl_color = "green" if pos["pnl"] >= 0 else "red"
+        pnl = float(pos.get("pnl", 0) or 0)
+        pnl_color = "green" if pnl >= 0 else "red"
         table.add_row(
-            pos["venue"],
-            pos["symbol"],
-            pos["side"],
-            str(pos["size"]),
-            f"{pos['entry']:.4f}",
-            f"{pos['current']:.4f}",
-            f"[{pnl_color}]{pos['pnl']:+.2f}[/{pnl_color}]",
+            pos.get("venue", ""),
+            pos.get("symbol", ""),
+            pos.get("side", ""),
+            str(pos.get("size", "")),
+            f"{float(pos.get('entry', 0) or 0):.4f}",
+            f"{float(pos.get('current', 0) or 0):.4f}",
+            f"[{pnl_color}]{pnl:+.2f}[/{pnl_color}]",
         )
 
     console.print(table)
@@ -837,13 +848,92 @@ def webhook(
 # ─── NEW PRODUCTION COMMANDS ───
 
 @app.command()
-def dashboard():
+def dashboard(
+    port: int = typer.Option(8080, "--port", "-p", help="Port for the API server"),
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind the API server"),
+    dev: bool = typer.Option(False, "--dev", help="Start the Vite dev server instead of serving the built dist"),
+    no_open: bool = typer.Option(False, "--no-open", help="Do not open a browser automatically"),
+):
+    """Launch the Alpha Trader web dashboard (API + built frontend, or --dev Vite server)."""
+    project_dir = Path(__file__).parent.resolve()
+    api_url = f"http://{host}:{port}"
+    frontend_url = "http://localhost:5173" if dev else api_url
+
+    if not os.getenv("DEXTER_WEB_PASSWORD"):
+        console.print(
+            "[bold yellow]⚠️  DEXTER_WEB_PASSWORD is not set. Set it before launching the dashboard.[/bold yellow]"
+        )
+
+    console.print("[bold blue]Launching Alpha Trader Web Dashboard[/bold blue]")
+    console.print(f"[dim]API:[/dim]       {api_url}")
+    console.print(f"[dim]Frontend:[/dim]  {frontend_url}\n")
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(project_dir) + os.pathsep + env.get("PYTHONPATH", "")
+
+    api_proc = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "dexter.api:app", "--host", host, "--port", str(port), "--log-level", "warning"],
+        cwd=str(project_dir),
+        env=env,
+    )
+    dev_proc = None
+
+    def _cleanup():
+        if dev_proc is not None:
+            dev_proc.terminate()
+        api_proc.terminate()
+
+    atexit.register(_cleanup)
+
+    # Wait for API readiness
+    for _ in range(30):
+        try:
+            from urllib.request import urlopen
+            with urlopen(f"{api_url}/api/me", timeout=1.0) as resp:
+                if resp.status < 500:
+                    break
+        except Exception:
+            pass
+        time.sleep(0.5)
+    else:
+        console.print("[yellow]API server did not respond in time; continuing anyway[/yellow]")
+
+    if dev:
+        web_dir = project_dir / "web"
+        if (web_dir / "package.json").exists():
+            console.print("[dim]Starting Vite dev server...[/dim]")
+            dev_proc = subprocess.Popen(
+                ["npm", "run", "dev"],
+                cwd=str(web_dir),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            time.sleep(2)
+        else:
+            console.print("[red]web/package.json not found; cannot start dev server[/red]")
+
+    if not no_open:
+        try:
+            webbrowser.open(frontend_url)
+        except Exception:
+            pass
+
+    try:
+        api_proc.wait()
+    except KeyboardInterrupt:
+        console.print("\n[bold yellow]Shutting down dashboard...[/bold yellow]")
+    finally:
+        _cleanup()
+
+
+@app.command()
+def tui():
     """Launch the live TUI dashboard."""
     from dexter.tui import AlphaTraderDashboard
-    console.print("[bold blue]Launching Alpha Trader Dashboard...[/bold blue]")
+    console.print("[bold blue]Launching Alpha Trader TUI Dashboard...[/bold blue]")
     console.print("[dim]Keys: r=run  p=pause  t=trade  c=config  q=quit[/dim]\n")
-    app = AlphaTraderDashboard()
-    app.run()
+    tui_app = AlphaTraderDashboard()
+    tui_app.run()
 
 
 @app.command()
@@ -904,7 +994,7 @@ def init():
 
     # Venue config
     console.print("\n[bold]Step 2: Trading Venues[/bold]")
-    venues = ["oanda", "topstep", "schwab", "kalshi"]
+    venues = ["oanda", "topstep", "apex", "schwab", "kalshi"]
     for v in venues:
         console.print(f"  • {v}")
     console.print("[dim]Venues are configured in config/config.yaml[/dim]")
@@ -935,9 +1025,9 @@ agents:
 
     console.print("\n[bold green]Setup complete![/bold green]")
     console.print("\nNext steps:")
-    console.print("  [b]dexter dashboard[/b]   → Launch the TUI")
-    console.print("  [b]dexter serve[/b]      → Start the web dashboard")
-    console.print("  [b]dexter run[/b]        → Start the scheduler")
+    console.print("  [b]alphatrader dashboard[/b]   → Launch the web dashboard")
+    console.print("  [b]alphatrader tui[/b]         → Launch the TUI")
+    console.print("  [b]alphatrader run[/b]         → Start the scheduler")
 
 
 @app.command()
@@ -1009,6 +1099,17 @@ def status():
         except Exception as e:
             venue_table.add_row("TopstepX", "[yellow]UNKNOWN[/yellow]", str(e))
 
+        # Apex Trader Funding
+        try:
+            if os.getenv("APEX_USERNAME") and os.getenv("APEX_PASSWORD"):
+                from tools.browser_agents import PropFirmAgent
+                agent = PropFirmAgent(platform="apex", dry_run=True)
+                venue_table.add_row("Apex", "[green]READY[/green]", "credentials configured")
+            else:
+                venue_table.add_row("Apex", "[yellow]NOT CONFIGURED[/yellow]", "set APEX_USERNAME / APEX_PASSWORD")
+        except Exception as e:
+            venue_table.add_row("Apex", "[yellow]UNKNOWN[/yellow]", str(e))
+
         # ThinkOrSwim desktop
         try:
             import subprocess
@@ -1062,6 +1163,307 @@ def status():
                 f"[{sc}]{t.status}[/{sc}]",
             )
         console.print(trade_table)
+
+
+# ─── RESEARCH COMMANDS ───
+
+research_app = typer.Typer(help="Research agenda and auto-research commands")
+app.add_typer(research_app, name="research")
+
+
+@research_app.command("run")
+def research_run(
+    symbols: Optional[List[str]] = typer.Option(
+        None, "--symbols", "-s", help="Symbols to research (comma-separated or repeated)"
+    ),
+):
+    """Run an auto-research cycle and generate a research agenda."""
+    from tools.auto_research import AutoResearchEngine
+    from dexter.api import _load_config
+
+    config = _load_config()
+    engine = AutoResearchEngine(config)
+
+    # Typer repeats become a flat list; also support comma-separated values
+    flat_symbols: List[str] = []
+    for s in symbols or []:
+        flat_symbols.extend([x.strip() for x in s.split(",") if x.strip()])
+    flat_symbols = list(dict.fromkeys(flat_symbols)) or None
+
+    console.print(f"[bold cyan]Running auto-research cycle...[/bold cyan]")
+    if flat_symbols:
+        console.print(f"[dim]Symbols: {', '.join(flat_symbols)}[/dim]")
+
+    try:
+        result = asyncio.run(engine.run_cycle(symbols=flat_symbols))
+    except Exception as e:
+        console.print(f"[red]Research cycle failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✅ Research cycle complete[/green]")
+    console.print(f"  Summary: {result.get('summary')}")
+    console.print(f"  Report:  {result.get('report_path')}")
+    console.print(f"  Plans:   {len(result.get('plans', []))}")
+
+
+@research_app.command("agendas")
+def research_agendas(
+    name: Optional[str] = typer.Option(None, "--name", "-n", help="Show the contents of a specific agenda file"),
+):
+    """List generated research agendas or show the contents of one."""
+    research_dir = Path("data/research")
+    if not research_dir.exists():
+        console.print("[yellow]No research agendas found.[/yellow]")
+        return
+
+    files = sorted(research_dir.glob("research_agenda_*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files:
+        console.print("[yellow]No research agendas found.[/yellow]")
+        return
+
+    if name:
+        target = research_dir / Path(name).name
+        if not target.exists():
+            console.print(f"[red]Agenda not found: {name}[/red]")
+            raise typer.Exit(1)
+        console.print(Panel(target.read_text(encoding="utf-8"), title=f"📄 {target.name}"))
+        return
+
+    table = Table(title="Research Agendas")
+    table.add_column("Name", style="cyan")
+    table.add_column("Generated", style="dim")
+    table.add_column("Size", justify="right")
+    for f in files:
+        table.add_row(f.name, datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"), f"{f.stat().st_size:,}")
+    console.print(table)
+
+
+# ─── ANALYST COMMANDS ───
+
+analyst_app = typer.Typer(help="Analyst registry commands")
+app.add_typer(analyst_app, name="analyst")
+
+
+@analyst_app.command("list")
+def analyst_list():
+    """List available analysts and their configured weights."""
+    from dexter.api import _load_config, _get_analyst_registry
+
+    config = _load_config()
+    weights = config.get("analyst_weights", {})
+
+    try:
+        registry = _get_analyst_registry(config)
+    except Exception as e:
+        console.print(f"[red]Failed to load analyst registry: {e}[/red]")
+        raise typer.Exit(1)
+
+    table = Table(title="Analyst Registry")
+    table.add_column("Name", style="cyan")
+    table.add_column("Description", style="white")
+    table.add_column("Weight", justify="right")
+    for name, inst in registry.items():
+        table.add_row(
+            name,
+            getattr(inst, "description", "")[:60],
+            f"{float(weights.get(name, getattr(inst, 'default_weight', 1.0))):.2f}",
+        )
+    console.print(table)
+
+
+@analyst_app.command("run")
+def analyst_run(
+    name: str = typer.Argument(..., help="Analyst name from `alphatrader analyst list`"),
+    symbol: str = typer.Argument(..., help="Symbol to analyze"),
+):
+    """Run a single analyst on a symbol."""
+    from dexter.api import _load_config, _get_analyst_registry
+
+    config = _load_config()
+    registry = _get_analyst_registry(config)
+    if name not in registry:
+        console.print(f"[red]Unknown analyst: {name}[/red]")
+        console.print(f"[yellow]Available: {', '.join(registry.keys())}[/yellow]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold cyan]Running {name} on {symbol.upper()}...[/bold cyan]")
+    try:
+        report = asyncio.run(registry[name].analyze(symbol.upper()))
+    except Exception as e:
+        console.print(f"[red]Analyst run failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    data = report.model_dump() if hasattr(report, "model_dump") else dict(report)
+    console.print_json(data=data)
+
+
+# ─── MARKET DATA COMMANDS ───
+
+market_data_app = typer.Typer(help="Market data provider commands")
+app.add_typer(market_data_app, name="market-data")
+
+
+@market_data_app.command("massive")
+def market_data_massive(
+    symbol: str = typer.Argument(..., help="Symbol to fetch (e.g. SPY, AAPL)"),
+):
+    """Fetch OHLCV + snapshot from the Massive market data API."""
+    try:
+        from market_data.providers.massive_provider import MassiveProvider
+    except ImportError:
+        console.print("[red]Massive provider is not installed or importable.[/red]")
+        raise typer.Exit(1)
+
+    config = {"market_data_apis": {"massive": {"enabled": True}}}
+    provider = MassiveProvider(config)
+
+    async def _fetch():
+        try:
+            return await asyncio.gather(
+                provider.get_ohlcv(symbol.upper(), multiplier=1, timespan="day", days=30),
+                provider.get_snapshot(symbol.upper()),
+            )
+        finally:
+            await provider.close()
+
+    try:
+        ohlcv, snapshot = asyncio.run(_fetch())
+    except Exception as e:
+        console.print(f"[red]Massive API error: {e}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold cyan]Massive data for {symbol.upper()}[/bold cyan]")
+    console.print_json(data={"ohlcv": ohlcv, "snapshot": snapshot})
+
+
+# ─── AUTOHEDGE COMMANDS ───
+
+autohedge_app = typer.Typer(help="AutoHedge strategy commands")
+app.add_typer(autohedge_app, name="autohedge")
+
+
+@autohedge_app.command("run")
+def autohedge_run(
+    task: str = typer.Argument(..., help="Natural-language task, e.g. 'hedged pair AAPL vs MSFT'"),
+):
+    """Run the AutoHedge director or adapter."""
+    from dexter.api import _load_config
+
+    config = _load_config()
+    console.print(f"[bold cyan]Running AutoHedge task:[/bold cyan] {task}")
+
+    # Prefer native Alpha Trader pipeline
+    try:
+        from agents.autohedge_director import AutoHedgeDirector
+
+        director = AutoHedgeDirector(config)
+        result = asyncio.run(director.run_cycle(task))
+        console.print("[green]✅ AutoHedge director result[/green]")
+        console.print_json(data=result)
+        return
+    except Exception as e:
+        console.print(f"[yellow]Native AutoHedgeDirector failed, falling back to adapter: {e}[/yellow]")
+
+    try:
+        from tools.autohedge_adapter import AutoHedgeAdapter
+
+        adapter = AutoHedgeAdapter(config)
+        result = asyncio.run(adapter.run(task))
+        console.print("[green]✅ AutoHedge adapter result[/green]")
+        console.print_json(data=result)
+    except Exception as e:
+        console.print(f"[red]AutoHedge failed: {e}[/red]")
+        raise typer.Exit(1)
+
+
+# ─── VALUECELL COMMANDS ───
+
+valuecell_app = typer.Typer(help="ValueCell fundamental/news/strategy commands")
+app.add_typer(valuecell_app, name="valuecell")
+
+
+@valuecell_app.command("analyze")
+def valuecell_analyze(
+    symbol: str = typer.Argument(..., help="Symbol to analyze"),
+):
+    """Run the ValueCell fundamental/news/strategy analyst."""
+    try:
+        from agents.valuecell_analyst import ValueCellAnalyst
+    except ImportError:
+        console.print("[red]ValueCell analyst is not installed or importable.[/red]")
+        raise typer.Exit(1)
+
+    from dexter.api import _load_config
+
+    config = _load_config()
+    analyst = ValueCellAnalyst(config)
+    console.print(f"[bold cyan]Running ValueCell analysis on {symbol.upper()}...[/bold cyan]")
+    try:
+        report = asyncio.run(analyst.analyze(symbol.upper()))
+    except Exception as e:
+        console.print(f"[red]ValueCell analysis failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    data = report.model_dump() if hasattr(report, "model_dump") else dict(report)
+    console.print_json(data=data)
+
+
+# ─── AUDIT COMMANDS ───
+
+audit_app = typer.Typer(help="Tamper-evident audit ledger commands")
+app.add_typer(audit_app, name="audit")
+
+
+@audit_app.command("list")
+def audit_list(
+    type: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by record type"),
+    limit: int = typer.Option(100, "--limit", "-l", help="Maximum records to show"),
+):
+    """Query the hash-chained audit ledger."""
+    try:
+        from tools.audit_ledger import AuditLedger
+    except ImportError:
+        console.print("[red]Audit ledger is not installed or importable.[/red]")
+        raise typer.Exit(1)
+
+    ledger = AuditLedger()
+    try:
+        records = ledger.get_records(record_type=type, limit=max(1, min(limit, 1000)))
+    except Exception as e:
+        console.print(f"[red]Audit query failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    if not records:
+        console.print("[yellow]No audit records found.[/yellow]")
+        return
+
+    table = Table(title="Audit Ledger")
+    table.add_column("Seq", justify="right", style="cyan")
+    table.add_column("Timestamp", style="dim")
+    table.add_column("Type")
+    table.add_column("Payload", style="white")
+    for r in records:
+        payload_preview = json.dumps(r.payload, default=str)[:80]
+        table.add_row(str(r.seq), r.timestamp, r.type, payload_preview)
+    console.print(table)
+
+
+@audit_app.command("verify")
+def audit_verify():
+    """Verify the integrity of the audit ledger."""
+    try:
+        from tools.audit_ledger import AuditLedger
+    except ImportError:
+        console.print("[red]Audit ledger is not installed or importable.[/red]")
+        raise typer.Exit(1)
+
+    ledger = AuditLedger()
+    result = ledger.verify()
+    if result.get("valid"):
+        console.print(f"[green]✅ Audit ledger valid — {result.get('records_checked', 0)} records checked[/green]")
+    else:
+        console.print(f"[red]❌ Audit ledger integrity failed at seq {result.get('first_bad_seq')}[/red]")
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,11 @@
+name = "alphatrader"
+compatibility_date = "2026-08-20"
+pages_build_output_dir = "dist"
+
+# Deployment command:
+#   cd web && npm run build && npx wrangler pages deploy dist
+#
+# Before deploying, set VITE_API_BASE_URL to your API origin, e.g.:
+#   export VITE_API_BASE_URL=https://alphatrader-api.allternit.com
+# Or create web/.env.production with:
+#   VITE_API_BASE_URL=https://alphatrader-api.allternit.com

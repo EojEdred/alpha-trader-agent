@@ -112,6 +112,13 @@ class PropFirmAgent(BaseBrowserAgent):
                 "username": "input[name='username'], input[name='email']",
                 "password": "input[type='password']",
                 "login_button": "button[type='submit']",
+                "buy_button": "button:has-text('Buy'), [data-testid='buy-btn'], .buy-button, button.buy",
+                "sell_button": "button:has-text('Sell'), [data-testid='sell-btn'], .sell-button, button.sell",
+                "quantity_input": "input[name='quantity'], input[name='qty'], [data-testid='qty-input'], input[placeholder*='qty' i]",
+                "submit_order": "button:has-text('Submit'), button:has-text('Place Order'), [data-testid='submit-order'], button[type='submit']",
+                "positions_tab": "button:has-text('Positions'), [data-testid='positions-tab'], a:has-text('Positions')",
+                "account_balance": "[data-testid='account-balance'], .balance, .account-value, .account-balance",
+                "daily_pnl": "[data-testid='daily-pnl'], .daily-pnl, .pnl-value",
             }
         },
         "leeloo": {
