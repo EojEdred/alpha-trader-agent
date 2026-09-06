@@ -11,6 +11,7 @@ import asyncio
 import subprocess
 import shutil
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Any, Optional
 from loguru import logger
 from dotenv import load_dotenv
@@ -24,9 +25,155 @@ except Exception:  # pragma: no cover
 load_dotenv()
 
 # AI / Inference Configuration
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "kimi-cli")  # "kimi-cli", "codex-cli", "gemini-cli"
+# Allternit runs inference through `gizzi exec` (local oMLX / configured
+# provider) plus the git second brain at ~/brain. Alpha Trader uses that
+# same path first, then kimi-cli, then cloud APIs.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gizzi-exec")
 
 # ─── CLI WRAPPERS ───
+
+def allternit_brain_path() -> Optional[Path]:
+    """Resolve the Allternit/gizzi second-brain repo."""
+    for env_name in ("TASTE_BRAIN", "GIZZI_BRAIN"):
+        raw = os.getenv(env_name, "").strip()
+        if raw:
+            p = Path(raw).expanduser()
+            if p.exists():
+                return p
+    settings = Path.home() / ".gizzi" / "settings.json"
+    if settings.exists():
+        try:
+            data = json.loads(settings.read_text())
+            raw = (data.get("brain") or {}).get("path") or data.get("brain.path") or ""
+            if raw:
+                p = Path(raw).expanduser()
+                if p.exists():
+                    return p
+        except Exception:
+            pass
+    fallback = Path.home() / "brain"
+    return fallback if fallback.exists() else None
+
+
+def load_allternit_brain_context(limit: int = 4000) -> str:
+    """Identity + MEMORY from `gizzi brain` so Dexter talks with the same context."""
+    root = allternit_brain_path()
+    if root is None:
+        return ""
+    chunks: List[str] = []
+    for name in ("identity.md", "MEMORY.md"):
+        path = root / name
+        if path.exists():
+            try:
+                chunks.append(path.read_text()[:2000])
+            except OSError:
+                continue
+    text = "\n\n".join(chunks).strip()
+    return text[:limit]
+
+
+def gizzi_omlx_endpoint() -> Optional[Dict[str, str]]:
+    """Read local oMLX (or any OpenAI-compatible) endpoint from gizzi config."""
+    config_path = Path.home() / ".config" / "gizzi" / "gizzi.json"
+    if not config_path.exists():
+        return None
+    try:
+        config = json.loads(config_path.read_text())
+    except Exception:
+        return None
+    providers = config.get("provider") or {}
+    preferred = str(config.get("model") or "")
+    pref_provider = preferred.split("/", 1)[0] if "/" in preferred else ""
+    order = list(providers.keys())
+    if pref_provider in providers:
+        order = [pref_provider] + [k for k in order if k != pref_provider]
+    for name in order:
+        opts = (providers.get(name) or {}).get("options") or {}
+        base = str(opts.get("baseURL") or opts.get("baseUrl") or "").rstrip("/")
+        if not base:
+            continue
+        models = list((providers.get(name) or {}).get("models") or {})
+        model = preferred.split("/", 1)[-1] if preferred.startswith(name + "/") else (models[0] if models else "")
+        return {
+            "name": name,
+            "base_url": base,
+            "model": model or "local",
+            "api_key": str(opts.get("apiKey") or "local"),
+        }
+    return None
+
+
+class GizziCLIWrapper:
+    """Allternit brain CLI: `gizzi exec --ci` (same path as the rest of the platform)."""
+
+    async def ainvoke(self, messages: list, **kwargs) -> "_SimpleCompletion":
+        prompt = "\n\n".join(m.content for m in messages if hasattr(m, "content"))
+        text = await self._run(prompt)
+        return _SimpleCompletion(completion=text)
+
+    async def _run(self, prompt: str) -> str:
+        exe = os.getenv("GIZZI_PATH") or shutil.which("gizzi")
+        if not exe:
+            raise RuntimeError("gizzi CLI not found (Allternit brain)")
+        # Force the local oMLX model so gizzi never falls through to a cloud key.
+        ep = gizzi_omlx_endpoint() or {}
+        model = os.getenv("GIZZI_LOCAL_MODEL") or (
+            f"{ep['name']}/{ep['model']}" if ep.get("name") and ep.get("model") else ""
+        )
+        args = [exe, "exec", "--ci", "--ci-format", "text"]
+        if model:
+            args.extend(["-m", model])
+        args.append(prompt)
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=90)
+        if proc.returncode != 0:
+            err = stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"gizzi exec failed: {err or proc.returncode}")
+        text = stdout.decode("utf-8", errors="replace").strip()
+        if not text:
+            text = stderr.decode("utf-8", errors="replace").strip()
+        return text
+
+
+class OpenAICompatWrapper:
+    """Generic OpenAI-compatible chat (oMLX, SpaceXAI/xAI, Kimi API)."""
+
+    def __init__(self, api_key: str, base_url: str, model: str):
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+
+    async def ainvoke(self, messages: list, **kwargs) -> "_SimpleCompletion":
+        if aiohttp is None:
+            raise RuntimeError("aiohttp is not installed")
+        payload_messages = []
+        for m in messages:
+            if isinstance(m, dict):
+                payload_messages.append(m)
+            elif hasattr(m, "content"):
+                payload_messages.append({"role": "user", "content": m.content})
+        headers = {"Content-Type": "application/json"}
+        if self.api_key and self.api_key not in {"local", "none"}:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        payload = {
+            "model": self.model,
+            "messages": payload_messages,
+            "temperature": float(os.getenv("BRAIN_TEMPERATURE", "0.3")),
+        }
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=timeout
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                return _SimpleCompletion(completion=(content or "").strip())
+
 
 class KimiCLIWrapper:
     """Wrapper for the Kimi Code CLI (kimi) or legacy kimi-cli subprocess."""
@@ -177,15 +324,32 @@ class KimiAPIWrapper:
 
 async def _try_provider(provider: str, prompt: str, system_instruction: str) -> str:
     """Try a single provider and return its response text."""
-    if provider == "kimi-api":
+    messages: List[Dict[str, str]] = []
+    if system_instruction:
+        messages.append({"role": "system", "content": system_instruction})
+    messages.append({"role": "user", "content": prompt})
+    full_prompt = f"{system_instruction}\n\n{prompt}".strip()
+
+    if provider == "gizzi-exec":
+        wrapper = GizziCLIWrapper()
+        response = await wrapper.ainvoke([type("Msg", (), {"content": full_prompt})()])
+    elif provider == "omlx":
+        ep = gizzi_omlx_endpoint()
+        if not ep:
+            raise RuntimeError("no oMLX endpoint in gizzi config")
+        wrapper = OpenAICompatWrapper(ep["api_key"], ep["base_url"], ep["model"])
+        response = await wrapper.ainvoke(messages)
+    elif provider == "xai":
+        key = os.getenv("XAI_API_KEY", "")
+        if not key:
+            raise RuntimeError("XAI_API_KEY not set")
+        model = os.getenv("XAI_MODEL", "grok-4.5")
+        wrapper = OpenAICompatWrapper(key, "https://api.x.ai/v1", model)
+        response = await wrapper.ainvoke(messages)
+    elif provider == "kimi-api":
         wrapper = KimiAPIWrapper()
-        messages: List[Dict[str, str]] = []
-        if system_instruction:
-            messages.append({"role": "system", "content": system_instruction})
-        messages.append({"role": "user", "content": prompt})
         response = await wrapper.ainvoke(messages)
     else:
-        full_prompt = f"{system_instruction}\n\n{prompt}".strip()
         if provider == "codex-cli":
             wrapper = CodexCLIWrapper()
         elif provider == "gemini-cli":
@@ -199,15 +363,30 @@ async def _try_provider(provider: str, prompt: str, system_instruction: str) -> 
     return text
 
 
+async def _omlx_reachable() -> bool:
+    ep = gizzi_omlx_endpoint()
+    if not ep or aiohttp is None:
+        return False
+    try:
+        timeout = aiohttp.ClientTimeout(total=1.5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{ep['base_url']}/models") as resp:
+                return resp.status < 500
+    except Exception:
+        return False
+
+
 async def call_brain(prompt: str, system_instruction: str = "") -> str:
-    """Universal wrapper to call the brain via CLI/API with fallback."""
-    providers = [LLM_PROVIDER]
-    if LLM_PROVIDER != "kimi-api" and (os.getenv("KIMI_API_KEY") or os.getenv("MOONSHOT_API_KEY")):
-        providers.append("kimi-api")
-    if LLM_PROVIDER not in ("kimi", "kimi-cli"):
-        providers.extend(["kimi", "kimi-cli"])
-    if LLM_PROVIDER != "codex-cli":
-        providers.append("codex-cli")
+    """CLI-subprocess brain only. No cloud API keys.
+
+    Allternit path: `gizzi exec -m omlx/...` when local oMLX is up, else kimi CLI.
+    """
+    providers: List[str] = []
+    if await _omlx_reachable():
+        providers.append("gizzi-exec")
+    providers.append("kimi-cli")
+    if LLM_PROVIDER in {"gizzi-exec", "kimi-cli", "kimi"} and LLM_PROVIDER not in providers:
+        providers.insert(0, LLM_PROVIDER)
 
     last_error = ""
     for provider in providers:

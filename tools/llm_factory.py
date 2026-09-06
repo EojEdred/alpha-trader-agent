@@ -85,6 +85,8 @@ class LLMFactory:
 
         # Priority order: user's preferred providers first
         self._discover_kimi_from_gizzi()      # User's gizzi config (preferred)
+        self._discover_gizzi_local_endpoints() # oMLX / OpenAI-compat from gizzi.json
+        self._discover_xai_from_env()          # SpaceXAI / xAI
         self._discover_kimi_from_env()         # KIMI_API_KEY / MOONSHOT_API_KEY
 
         if not fast_mode:
@@ -152,6 +154,51 @@ class LLMFactory:
                         return
         except Exception as e:
             logger.debug(f"Gizzi config read failed: {e}")
+
+    def _discover_gizzi_local_endpoints(self):
+        """Discover local OpenAI-compatible runtimes from ~/.config/gizzi/gizzi.json."""
+        config_path = Path.home() / ".config" / "gizzi" / "gizzi.json"
+        if not config_path.exists():
+            return
+        try:
+            config = json.loads(config_path.read_text())
+        except Exception as e:
+            logger.debug(f"Gizzi config read failed: {e}")
+            return
+        for name, provider_config in (config.get("provider") or {}).items():
+            opts = (provider_config or {}).get("options") or {}
+            base_url = str(opts.get("baseURL") or opts.get("baseUrl") or "").rstrip("/")
+            if not base_url:
+                continue
+            if "moonshot" in name or "kimi" in name:
+                continue
+            models = list((provider_config or {}).get("models") or {})
+            self._providers[name] = ProviderInfo(
+                name=name,
+                type="openai-compatible",
+                models=models or ["local"],
+                api_key=str(opts.get("apiKey") or "local"),
+                base_url=base_url,
+                available=True,
+                source="gizzi config",
+            )
+            logger.info(f"Found gizzi provider {name} at {base_url}")
+
+    def _discover_xai_from_env(self):
+        """SpaceXAI / xAI (XAI_API_KEY → https://api.x.ai/v1)."""
+        key = os.getenv("XAI_API_KEY")
+        if not key:
+            return
+        self._providers["xai"] = ProviderInfo(
+            name="xai",
+            type="openai-compatible",
+            models=[os.getenv("XAI_MODEL", "grok-4.5")],
+            api_key=key,
+            base_url="https://api.x.ai/v1",
+            available=True,
+            source="env XAI_API_KEY",
+        )
+        logger.info("Found SpaceXAI / xAI API key")
 
     def _discover_kimi_from_env(self):
         """Check environment for Kimi/Moonshot API keys."""

@@ -21,6 +21,12 @@ from loguru import logger
 from models import ExecutionMode, TradeIntent, TradeStatus, generate_intent_id
 from models.decision_schemas import Direction
 
+try:
+    from alpha_platform.paths import ensure_autohedge_on_path
+
+    ensure_autohedge_on_path()
+except Exception:
+    pass
 
 try:
     from autohedge.main import AutoHedge

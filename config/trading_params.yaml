@@ -3,6 +3,13 @@
 # Any file needing trading parameters MUST import from here.
 # ═══════════════════════════════════════════════════════════════
 
+# ─── SIGNAL SOURCE SYMBOL FILTERS ───
+# Disable specific signal sources for symbols that have underperformed in
+# walk-forward backtests. thesis_id -> list of canonical symbols to exclude.
+source_symbol_denylist:
+  # BTC strategy should not run on equities/indices/gold in the focus universe.
+  fmz_btc_139b: ["SPY", "QQQ", "TSLA", "GLD", "ES", "NQ", "GC", "XAUUSD"]
+
 # ─── PAPER TRADING MODE ───
 # When true: orders are validated but NOT submitted to brokers.
 # Logs show what WOULD have traded. Run for 2+ days before going live.
@@ -40,6 +47,9 @@ options:
   min_gap_pct: 0.30             # No trade if gap < 0.30%
   max_gap_pct: 8.0              # Skip absurd gaps
   
+  # Expiration / theta risk
+  min_dte: 14                   # Reject options expiring in < 2 weeks (no 0-DTE / next-day risk)
+
   # Sizing
   base_quantity: 1              # Start conservative: 1 contract
   max_quantity: 2               # Never more than 2 per symbol

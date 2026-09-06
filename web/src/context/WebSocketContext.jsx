@@ -46,8 +46,15 @@ export function AlphaTraderProvider({ children }) {
   const connectWebSocket = useCallback(() => {
     if (wsRef.current || !authenticated) return
     intentionalCloseRef.current = false
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`)
+    const apiBase = import.meta.env.VITE_API_BASE_URL || ''
+    let protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    let host = window.location.host
+    if (apiBase) {
+      const u = new URL(apiBase)
+      host = u.host
+      protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
+    }
+    const ws = new WebSocket(`${protocol}//${host}/ws`)
     wsRef.current = ws
 
     ws.onopen = () => {

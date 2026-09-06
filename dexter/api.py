@@ -146,6 +146,13 @@ BASE_DIR = Path(__file__).parent.parent
 WEB_DIR = BASE_DIR / "web"
 DIST_DIR = WEB_DIR / "dist"
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(BASE_DIR / ".env")
+except Exception:
+    pass
+
 SESSION_NAME = "dexter_session"
 SESSION_SECRET = os.getenv("DEXTER_WEB_PASSWORD", "")
 
@@ -482,10 +489,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Alpha Trader API", version="2.0.0", lifespan=lifespan)
 
+_CORS_ORIGINS = [
+    "https://alphatrader.allternit.com",
+    "https://alphatrader-bup.pages.dev",
+    "https://news.allternit.com",
+    "https://evaluating-formerly-latin-measure.trycloudflare.com",
+    "https://simulation-llc-squad-ser.trycloudflare.com",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=_CORS_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -511,6 +529,14 @@ async def require_auth(request: Request):
     token = request.cookies.get(SESSION_NAME)
     if not verify_session(token):
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+async def require_auth_or_loopback(request: Request):
+    """Allow the local Fincept UI to read platform state without a cookie jar."""
+    host = request.client.host if request.client else ""
+    if host in {"127.0.0.1", "::1", "localhost"}:
+        return
+    await require_auth(request)
 
 
 # ─── MODELS ───
@@ -787,7 +813,7 @@ async def autohedge_run(req: AutoHedgeRunRequest, _=Depends(require_auth)):
         result = await director.run_cycle(req.task)
         return {"status": "ok", "source": "autohedge_director", "result": result}
     except Exception as e:
-        logger.warning(f"AutoHedgeDirector failed, falling back to adapter: {e}")
+        get_state().add_log(f"AutoHedgeDirector failed, falling back to adapter: {e}")
 
     # Fallback to the pip-installed autohedge wrapper
     try:
@@ -799,8 +825,356 @@ async def autohedge_run(req: AutoHedgeRunRequest, _=Depends(require_auth)):
     except ImportError:
         raise HTTPException(status_code=503, detail="AutoHedge integration not available")
     except Exception as e:
-        logger.error(f"AutoHedge run failed: {e}")
+        get_state().add_log(f"AutoHedge run failed: {e}")
         raise HTTPException(status_code=500, detail=f"AutoHedge failed: {e}")
+
+
+@app.get("/api/platform/status")
+async def platform_status(_=Depends(require_auth_or_loopback)):
+    from alpha_platform.registry import component_status
+
+    return component_status()
+
+
+@app.get("/api/platform/inventory")
+async def platform_inventory(_=Depends(require_auth_or_loopback)):
+    from alpha_platform.registry import inventory
+
+    return inventory()
+
+
+@app.get("/api/platform/desk")
+async def platform_desk(_=Depends(require_auth_or_loopback)):
+    from alpha_platform.registry import desk_payload
+
+    return desk_payload()
+
+
+@app.get("/api/platform/brain")
+async def platform_brain(_=Depends(require_auth_or_loopback)):
+    """How Dexter is wired to the Allternit brain."""
+    import shutil
+
+    from tools.brain import LLM_PROVIDER, allternit_brain_path, gizzi_omlx_endpoint
+
+    omlx = gizzi_omlx_endpoint() or {}
+    path = allternit_brain_path()
+    return {
+        "ok": True,
+        "mode": "cli-subprocess-only",
+        "preferred": LLM_PROVIDER,
+        "gizzi_cli": bool(shutil.which("gizzi")),
+        "kimi_cli": bool(shutil.which("kimi") or shutil.which("kimi-cli")),
+        "omlx": omlx.get("base_url"),
+        "omlx_model": omlx.get("model"),
+        "brain_path": str(path) if path else "",
+        "order": ["gizzi-exec (local oMLX only)", "kimi-cli"],
+        "cloud_keys": False,
+    }
+
+
+class PlatformExecuteRequest(BaseModel):
+    symbol: str
+    direction: str = "long"
+    size: int = 1
+    venue: str = "oanda"
+
+
+class PlatformChatRequest(BaseModel):
+    message: str
+
+
+@app.post("/api/platform/execute")
+async def platform_execute(req: PlatformExecuteRequest, _=Depends(require_auth_or_loopback)):
+    """Place a trade through Dexter. Honors DRY_RUN / venue auto-approve rules."""
+    global _engine
+    state = get_state()
+    if _engine is None:
+        _engine = TradingEngine(dry_run=state.dry_run)
+    venue = req.venue.lower()
+    if venue == "topstep_projectx":
+        venue = "topstep"
+    try:
+        intent_id = await _engine.place_manual_trade(req.symbol, req.direction, req.size, venue)
+    except Exception as e:
+        get_state().add_log(f"platform execute failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    auto_venues = {"oanda", "kalshi", "polymarket", "topstep", "crypto", "paper", "apex", "tradovate"}
+    if venue in auto_venues:
+        await _engine.approve_intent(intent_id)
+        return {
+            "status": "executed" if not state.dry_run else "dry_run",
+            "symbol": req.symbol,
+            "direction": req.direction,
+            "size": req.size,
+            "venue": venue,
+            "intent_id": intent_id,
+            "dry_run": state.dry_run,
+        }
+    return {
+        "status": "pending",
+        "symbol": req.symbol,
+        "venue": venue,
+        "intent_id": intent_id,
+        "dry_run": state.dry_run,
+    }
+
+
+@app.post("/api/platform/chat")
+async def platform_chat(req: PlatformChatRequest, _=Depends(require_auth_or_loopback)):
+    text = await handle_chat(req.message)
+    return {"text": text, "response": text, "source": "dexter"}
+
+
+def _make_massive():
+    if MassiveProvider is None:
+        return None
+    provider = MassiveProvider(_load_config())
+    if not provider.enabled and os.getenv("MASSIVE_API_KEY"):
+        provider.enabled = True
+        provider.api_key = os.getenv("MASSIVE_API_KEY")
+    return provider
+
+
+def _quote_from_snapshot(symbol: str, snap: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(snap, dict):
+        return None
+    ticker = snap.get("ticker") if isinstance(snap.get("ticker"), dict) else snap
+    day = ticker.get("day") or {}
+    prev = ticker.get("prevDay") or {}
+    last = ticker.get("lastTrade") or {}
+    price = last.get("p") or day.get("c") or 0
+    if not price:
+        return None
+    prev_c = prev.get("c") or 0
+    chg = ticker.get("todaysChange")
+    if chg is None and prev_c:
+        chg = price - prev_c
+    chg_pct = ticker.get("todaysChangePerc")
+    if chg_pct is None and prev_c:
+        chg_pct = ((chg or 0) / prev_c) * 100
+    return {
+        "symbol": symbol,
+        "name": symbol,
+        "price": float(price or 0),
+        "change": float(chg or 0),
+        "change_pct": float(chg_pct or 0),
+        "high": float(day.get("h") or 0),
+        "low": float(day.get("l") or 0),
+        "open": float(day.get("o") or 0),
+        "volume": float(day.get("v") or 0),
+        "source": "massive",
+    }
+
+
+def _quote_from_candles(symbol: str, candles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not candles:
+        return None
+    last = candles[-1]
+    prev = candles[-2] if len(candles) > 1 else last
+    price = float(last.get("close") or 0)
+    prev_c = float(prev.get("close") or price)
+    chg = price - prev_c
+    chg_pct = (chg / prev_c * 100) if prev_c else 0
+    return {
+        "symbol": symbol,
+        "name": symbol,
+        "price": price,
+        "change": chg,
+        "change_pct": chg_pct,
+        "high": float(last.get("high") or 0),
+        "low": float(last.get("low") or 0),
+        "open": float(last.get("open") or 0),
+        "volume": float(last.get("volume") or 0),
+        "source": "massive",
+    }
+
+
+_TF_DEFAULTS = {
+    "minute": (2, 1),
+    "hour": (30, 1),
+    "day": (180, 1),
+    "week": (730, 1),
+    "month": (1825, 1),
+}
+
+
+@app.get("/api/platform/quotes")
+async def platform_quotes(symbols: str = "", _=Depends(require_auth_or_loopback)):
+    """Last/change quotes for Watchlist, Markets, Dashboard, and the CHART tab."""
+    from alpha_platform.registry import chart_symbol_for, desk_watchlist
+
+    requested = [s.strip().upper() for s in (symbols or "").split(",") if s.strip()]
+    if not requested:
+        requested = desk_watchlist()
+    provider = _make_massive()
+    if provider is None:
+        return {"ok": False, "quotes": [], "source": "none"}
+    quotes: List[Dict[str, Any]] = []
+    try:
+        for raw in requested:
+            chart = chart_symbol_for(raw)
+            quote = None
+            try:
+                snap = await provider.get_snapshot(chart)
+                quote = _quote_from_snapshot(raw, snap)
+            except Exception as e:
+                get_state().add_log(f"quote snapshot failed for {chart}: {e}")
+            if quote is None:
+                try:
+                    ohlcv = await provider.get_ohlcv(chart, multiplier=1, timespan="day", days=5)
+                    quote = _quote_from_candles(raw, (ohlcv or {}).get("candles") or [])
+                except Exception as e:
+                    get_state().add_log(f"quote ohlcv failed for {chart}: {e}")
+            if quote is not None:
+                quote["chart_symbol"] = chart
+                quotes.append(quote)
+    finally:
+        await provider.close()
+    return {"ok": True, "quotes": quotes, "source": "massive"}
+
+
+@app.get("/api/platform/news")
+async def platform_news(symbol: str = "SPY", limit: int = 20, _=Depends(require_auth_or_loopback)):
+    """Massive news for the NEWS tab ticker and the CHART workspace."""
+    from alpha_platform.registry import chart_symbol_for
+
+    chart = chart_symbol_for(symbol)
+    provider = _make_massive()
+    if provider is None:
+        return {"ok": False, "symbol": chart, "requested": symbol, "articles": [], "source": "none"}
+    try:
+        payload = await provider.get_news(ticker=chart, limit=max(1, min(limit, 50)))
+    except Exception as e:
+        get_state().add_log(f"news failed for {chart}: {e}")
+        return {"ok": False, "symbol": chart, "requested": symbol, "articles": [], "source": "error", "error": str(e)}
+    finally:
+        await provider.close()
+    articles = []
+    for item in (payload or {}).get("results") or []:
+        publisher = item.get("publisher") or {}
+        articles.append(
+            {
+                "id": str(item.get("id") or item.get("article_url") or ""),
+                "headline": item.get("title") or "",
+                "summary": item.get("description") or "",
+                "source": publisher.get("name") if isinstance(publisher, dict) else str(publisher or "Massive"),
+                "link": item.get("article_url") or "",
+                "time": item.get("published_utc") or "",
+                "tickers": item.get("tickers") or [chart],
+            }
+        )
+    return {"ok": True, "symbol": chart, "requested": symbol, "articles": articles, "source": "massive"}
+
+
+@app.get("/api/platform/ohlcv")
+async def platform_ohlcv(
+    symbol: str = "SPY",
+    days: int = 0,
+    timespan: str = "day",
+    multiplier: int = 1,
+    _=Depends(require_auth_or_loopback),
+):
+    """OHLCV for the CHART tab. Equities via Massive; FX/futures map to a liquid proxy."""
+    from alpha_platform.registry import chart_symbol_for
+
+    chart_symbol = chart_symbol_for(symbol)
+    span = (timespan or "day").lower()
+    if span in {"1m", "1min"}:
+        span, multiplier, days = "minute", 1, days or 2
+    elif span in {"5m", "5min"}:
+        span, multiplier, days = "minute", 5, days or 5
+    elif span in {"15m", "15min"}:
+        span, multiplier, days = "minute", 15, days or 10
+    elif span in {"1h", "hour"}:
+        span, multiplier, days = "hour", max(1, multiplier), days or 30
+    elif span in {"1d", "day"}:
+        span, multiplier, days = "day", 1, days or 180
+    elif span in {"1w", "week"}:
+        span, multiplier, days = "week", 1, days or 730
+    else:
+        default_days, default_mult = _TF_DEFAULTS.get(span, (90, 1))
+        multiplier = max(1, multiplier or default_mult)
+        days = days or default_days
+    provider = _make_massive()
+    if provider is None:
+        return {"symbol": chart_symbol, "requested": symbol, "candles": [], "source": "none"}
+    try:
+        ohlcv = await provider.get_ohlcv(chart_symbol, multiplier=multiplier, timespan=span, days=days)
+    except Exception as e:
+        get_state().add_log(f"OHLCV failed for {chart_symbol}: {e}")
+        return {"symbol": chart_symbol, "requested": symbol, "candles": [], "source": "error", "error": str(e)}
+    finally:
+        await provider.close()
+    candles = (ohlcv or {}).get("candles") or []
+    return {
+        "symbol": chart_symbol,
+        "requested": symbol,
+        "timespan": span,
+        "multiplier": multiplier,
+        "candles": candles,
+        "source": "massive",
+    }
+
+
+class PlatformActionRequest(BaseModel):
+    kind: str
+    symbol: str = "SPY"
+    task: Optional[str] = None
+
+
+@app.post("/api/platform/action")
+async def platform_action(req: PlatformActionRequest, _=Depends(require_auth_or_loopback)):
+    """Run Alpha Trader uniqueness: AutoHedge, analysts, FMZ smoke."""
+    kind = (req.kind or "").lower()
+    symbol = (req.symbol or "SPY").upper()
+    if kind == "autohedge":
+        task = req.task or f"Analyze {symbol} and propose a hedge"
+        try:
+            from agents.autohedge_director import AutoHedgeDirector
+
+            result = await AutoHedgeDirector(_load_config()).run_cycle(task)
+            return {"status": "ok", "kind": kind, "result": result}
+        except Exception as e:
+            from tools.autohedge_adapter import AutoHedgeAdapter
+
+            result = await AutoHedgeAdapter(_load_config()).run(task)
+            result["note"] = str(e)
+            return result
+    if kind == "analyst":
+        try:
+            from agents.technical_analyst import TechnicalAnalyst
+
+            report = await TechnicalAnalyst(_load_config()).analyze(symbol)
+            return {"status": "ok", "kind": kind, "result": report.model_dump() if hasattr(report, "model_dump") else report}
+        except Exception as e:
+            return {"status": "error", "kind": kind, "error": str(e)}
+    if kind == "hummingbot":
+        from alpha_platform.registry import hummingbot_inventory
+
+        return {"status": "ok", "kind": kind, "result": hummingbot_inventory()}
+    return {"status": "unknown_kind", "kind": kind}
+
+
+@app.post("/api/platform/fincept/launch")
+async def platform_launch_fincept(_=Depends(require_auth)):
+    from alpha_platform.launch import launch_fincept
+
+    return launch_fincept()
+
+
+@app.get("/api/platform/hummingbot")
+async def platform_hummingbot(_=Depends(require_auth)):
+    from alpha_platform.registry import hummingbot_inventory
+
+    return hummingbot_inventory()
+
+
+@app.get("/api/platform/vibe")
+async def platform_vibe(_=Depends(require_auth)):
+    from alpha_platform.registry import vibe_inventory
+
+    return vibe_inventory()
 
 
 @app.post("/api/valuecell/analyze")
@@ -1068,17 +1442,21 @@ async def me(request: Request):
 
 
 @app.post("/api/login")
-async def login(req: LoginRequest, response: Response):
+async def login(req: LoginRequest, request: Request, response: Response):
     if not SESSION_SECRET:
         raise HTTPException(status_code=500, detail="Web password not configured")
     if not hmac.compare_digest(req.password, SESSION_SECRET):
         raise HTTPException(status_code=401, detail="Invalid password")
+    forwarded = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    secure = request.url.scheme == "https" or forwarded == "https"
     response.set_cookie(
         SESSION_NAME,
         create_session(),
         httponly=True,
-        samesite="lax",
+        secure=secure,
+        samesite="none" if secure else "lax",
         max_age=60 * 60 * 24 * 7,
+        path="/",
     )
     return {"status": "ok"}
 
@@ -1704,6 +2082,14 @@ async def handle_chat(message: str) -> str:
     try:
         call_brain = _import_call_brain()
         persona = _import_chat_persona()
+        try:
+            from tools.brain import load_allternit_brain_context
+
+            brain_ctx = load_allternit_brain_context()
+            if brain_ctx:
+                persona = persona + "\n\nAllternit second brain (identity + memory):\n" + brain_ctx
+        except Exception:
+            pass
 
         # Build live context for the AI from the same payload the dashboard uses.
         recent_trades = trades[:5]
@@ -1730,8 +2116,8 @@ async def handle_chat(message: str) -> str:
         if answer and answer.strip():
             return answer
         return (
-            "Dexter's AI brain is offline: no working LLM provider. "
-            "Set KIMI_API_KEY in .env for the Kimi API, or authorize this device with `kimi-cli login`."
+            "Dexter's AI brain is offline. CLI subprocess only: `gizzi exec -m omlx/...` "
+            "when local oMLX is up, otherwise `kimi` CLI. No cloud API keys."
         )
     except Exception as e:
         return f"Brain error: {e}"
@@ -1741,7 +2127,7 @@ async def handle_chat(message: str) -> str:
 # Register explicit client-side routes so refresh/deep-linking works.
 # StaticFiles is mounted last to serve assets and the root index.html.
 
-_SPA_ROUTES = ["/", "/dashboard", "/trades", "/positions", "/pending", "/chat", "/logs", "/reports", "/control", "/settings", "/research", "/analysts", "/market-data", "/strategies", "/audit", "/signals", "/apex"]
+_SPA_ROUTES = ["/", "/dashboard", "/platform", "/trades", "/positions", "/pending", "/chat", "/logs", "/reports", "/control", "/settings", "/research", "/analysts", "/market-data", "/strategies", "/audit", "/signals", "/apex"]
 
 if DIST_DIR.exists():
     def _make_spa_handler():

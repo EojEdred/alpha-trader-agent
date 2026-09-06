@@ -1,0 +1,10 @@
+This directory is the Alpha Trader desktop UI.
+
+It is a personal-use copy of Fincept Terminal (C++20 / Qt6).
+The original work is licensed under AGPL-3.0-or-later. See LICENSE.
+
+Do not strip this LICENSE. Do not treat this tree as MIT.
+The rest of Alpha Trader (Dexter, Python, React fallback) stays MIT.
+
+Home screen: Alpha Trader desk (`alpha_trader`), which talks to Dexter
+at http://127.0.0.1:8080.

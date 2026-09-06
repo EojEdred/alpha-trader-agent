@@ -10,7 +10,10 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional
 from loguru import logger
 
-_STATE_PATH = "/Users/macbook/.alphatrader/data/circuit_breaker_state.json"
+# Store circuit-breaker state inside the project repo so it works on any machine.
+# Derive the repo root from the location of this file (tools/circuit_breakers.py).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_STATE_PATH = os.path.join(_REPO_ROOT, "data", "circuit_breaker_state.json")
 
 # ─── DEFAULT LIMITS (override via config/trading_params.yaml) ───
 DEFAULT_DAILY_LOSS_HALT = -500

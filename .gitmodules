@@ -1,0 +1,3 @@
+[submodule "strategies/fmzquant"]
+	path = strategies/fmzquant
+	url = https://github.com/fmzquant/strategies.git

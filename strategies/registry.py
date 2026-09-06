@@ -33,26 +33,44 @@ class StrategyRegistry:
         self._strategies: Dict[str, BaseStrategy] = {}
         self._classes: Dict[str, Type[BaseStrategy]] = {}
 
+    def _register_module(self, module_name: str):
+        """Import a strategy module and register its BaseStrategy subclasses."""
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as e:
+            logger.warning(f"Failed to load strategy module {module_name}: {e}")
+            return
+
+        for name, obj in inspect.getmembers(module, inspect.isclass):
+            if issubclass(obj, BaseStrategy) and obj is not BaseStrategy and hasattr(obj, "name"):
+                try:
+                    strategy = obj()
+                    self._strategies[strategy.name] = strategy
+                    self._classes[strategy.name] = obj
+                    logger.debug(f"Registered strategy: {strategy.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to instantiate strategy {name} from {module_name}: {e}")
+
     def discover(self):
         """Auto-discover all strategy classes in the strategies package."""
         import strategies
 
         package_path = Path(strategies.__file__).parent
 
+        # Native strategies in strategies/
         for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
-            if module_name in ("base", "registry"):
+            if module_name in ("base", "registry", "fmz_parser", "fmz_runtime", "data_feed", "confluence"):
                 continue
+            self._register_module(f"strategies.{module_name}")
 
-            try:
-                module = importlib.import_module(f"strategies.{module_name}")
-                for name, obj in inspect.getmembers(module, inspect.isclass):
-                    if issubclass(obj, BaseStrategy) and obj is not BaseStrategy and hasattr(obj, "name"):
-                        strategy = obj()
-                        self._strategies[strategy.name] = strategy
-                        self._classes[strategy.name] = obj
-                        logger.info(f"Registered strategy: {strategy.name}")
-            except Exception as e:
-                logger.warning(f"Failed to load strategy module {module_name}: {e}")
+        # Auto-generated FMZ strategies in strategies/generated/batch_*
+        generated_dir = package_path / "generated"
+        if generated_dir.exists():
+            for batch_dir in sorted(generated_dir.iterdir()):
+                if not batch_dir.is_dir() or not batch_dir.name.startswith("batch_"):
+                    continue
+                for _, module_name, _ in pkgutil.iter_modules([str(batch_dir)]):
+                    self._register_module(f"strategies.generated.{batch_dir.name}.{module_name}")
 
         logger.info(f"Strategy registry loaded: {len(self._strategies)} strategies")
 

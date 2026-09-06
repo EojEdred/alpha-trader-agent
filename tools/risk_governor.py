@@ -99,8 +99,12 @@ class RiskGovernor:
         consecutive_losses = portfolio_state.get("consecutive_losses", 0)
         max_drawdown = portfolio_state.get("max_drawdown_pct", 0.0)
 
-        # Per-trade risk in account percent
-        trade_risk_dollars = abs(intent.size * (intent.entry_price - intent.stop_price))
+        # Per-trade risk in account percent. Some instruments (options, futures)
+        # carry a contract multiplier stored on the intent as an extra attribute.
+        contract_multiplier = getattr(intent, "contract_multiplier", 1.0) or 1.0
+        trade_risk_dollars = abs(
+            intent.size * (intent.entry_price - intent.stop_price) * contract_multiplier
+        )
         trade_risk_pct = (trade_risk_dollars / account_value) * 100 if account_value else 0
 
         if trade_risk_pct > self.max_risk_per_trade_pct:

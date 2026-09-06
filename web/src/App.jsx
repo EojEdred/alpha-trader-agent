@@ -18,6 +18,7 @@ import Strategies from './pages/Strategies'
 import Audit from './pages/Audit'
 import Signals from './pages/Signals'
 import Tradovate from './pages/Tradovate'
+import Platform from './pages/Platform'
 
 function AppRoutes() {
   const { authenticated, checkingAuth } = useAlphaTrader()
@@ -38,6 +39,7 @@ function AppRoutes() {
     <Layout>
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/platform" element={<Platform />} />
         <Route path="/trades" element={<Trades />} />
         <Route path="/positions" element={<Positions />} />
         <Route path="/pending" element={<Pending />} />

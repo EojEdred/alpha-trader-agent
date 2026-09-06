@@ -249,7 +249,7 @@ class UnifiedExecutionRouter:
             
             # Browser-first venues
             "tradingview": [ExecutionMethod.BROWSER, ExecutionMethod.DESKTOP],
-            "topstep": [ExecutionMethod.BROWSER, ExecutionMethod.DESKTOP],
+            "topstep": [ExecutionMethod.API, ExecutionMethod.BROWSER, ExecutionMethod.DESKTOP],
             "apex": [ExecutionMethod.API, ExecutionMethod.BROWSER, ExecutionMethod.DESKTOP],
             "apexfutures": [ExecutionMethod.API, ExecutionMethod.BROWSER, ExecutionMethod.DESKTOP],
             "leeloo": [ExecutionMethod.BROWSER, ExecutionMethod.DESKTOP],
@@ -375,6 +375,8 @@ class UnifiedExecutionRouter:
                         units=int(intent.size),
                         side=intent.direction,
                         order_type="MARKET",
+                        stop_loss=round(intent.stop_price, 2) if intent.stop_price else None,
+                        take_profit=round(intent.target_price, 2) if intent.target_price else None,
                     ),
                     max_retries=3,
                     base_delay=1.0,
@@ -412,18 +414,37 @@ class UnifiedExecutionRouter:
                 return self._parse_api_result(result, venue, ExecutionMethod.API)
             
             elif venue == "topstep":
-                from tools.topstep import topstep_place_order
-                result = await self._retry_with_backoff(
-                    lambda: topstep_place_order(
-                        symbol=intent.symbol.upper(),
-                        quantity=int(intent.size),
-                        side="BUY" if intent.direction == "long" else "SELL",
-                        confirmed=getattr(intent, "confirmed", False),
-                    ),
-                    max_retries=2,
-                    base_delay=1.0,
-                    exceptions=(Exception,),
-                )
+                from tools.topstep import topstep_place_order, topstep_place_bracket_order
+                confirmed = getattr(intent, "confirmed", False)
+                # Use a bracket order when the intent includes a stop and target.
+                if intent.stop_price and intent.target_price:
+                    result = await self._retry_with_backoff(
+                        lambda: topstep_place_bracket_order(
+                            symbol=intent.symbol.upper(),
+                            quantity=int(intent.size),
+                            side=intent.direction,
+                            stop_loss=round(intent.stop_price, 2),
+                            take_profit=round(intent.target_price, 2),
+                            entry_price=round(intent.entry_price, 2) if intent.entry_price else None,
+                            order_type="MARKET",
+                            confirmed=confirmed,
+                        ),
+                        max_retries=2,
+                        base_delay=1.0,
+                        exceptions=(Exception,),
+                    )
+                else:
+                    result = await self._retry_with_backoff(
+                        lambda: topstep_place_order(
+                            symbol=intent.symbol.upper(),
+                            quantity=int(intent.size),
+                            side="BUY" if intent.direction == "long" else "SELL",
+                            confirmed=confirmed,
+                        ),
+                        max_retries=2,
+                        base_delay=1.0,
+                        exceptions=(Exception,),
+                    )
                 return self._parse_api_result(result, venue, ExecutionMethod.API)
             
             elif venue in ("apex", "apexfutures"):

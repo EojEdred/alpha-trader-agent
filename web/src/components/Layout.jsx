@@ -18,12 +18,14 @@ import {
   IconShieldCheck,
   IconBell,
   IconBuildingBank,
+  IconStack2,
 } from '@tabler/icons-react'
 import { useAlphaTrader } from '../context/WebSocketContext'
 import { cn, formatDuration } from '../lib/utils'
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: IconLayoutDashboard },
+  { to: '/platform', label: 'Platform', icon: IconStack2 },
   { to: '/research', label: 'Research', icon: IconBrain },
   { to: '/analysts', label: 'Analysts', icon: IconChartBar },
   { to: '/market-data', label: 'Market Data', icon: IconSearch },

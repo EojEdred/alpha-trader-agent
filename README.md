@@ -2,7 +2,7 @@
 
 Alpha Trader (Dexter) is a fully autonomous, multi-modal trading research and execution system. It is designed to run 24/7 on a local machine or VPS, scanning markets, analyzing setups with an AI brain, and executing options/futures trades based on defined rules.
 
-It features a premium, pre-built web dashboard command center that serves as a plug-and-play management interface for you or your users.
+**The desktop UI is Fincept Terminal**, vendored under `terminal/` (AGPL-3.0). Dexter is the brain on `:8080`. The Alpha Trader desk is the home screen of that Qt terminal. A React dashboard remains as a fallback web view.
 
 ### 📥 Packaged Download
 You can download the latest pre-packaged, zero-configuration version of the app directly from GitHub:
@@ -18,6 +18,7 @@ You can download the latest pre-packaged, zero-configuration version of the app 
 - **Interactive Configuration Panel**: Add your API credentials, configure Telegram alerts, set up the AI Brain, and manage Schwab integration right in the web UI.
 - **Schwab Options Trading**: Fully automated options routing with automatic token health checking and refresh alerts.
 - **AI Brain Confluence**: Leverage LLMs (OpenAI, Gemini, Anthropic, or Kimi) to score trade setups, verify charts, and analyze morning reports.
+- **FMZ Quant Strategy Library**: Imports the full [fmzquant/strategies](https://github.com/fmzquant/strategies) catalog (~5,800 strategies) and wraps runnable JavaScript/Python strategies as Alpha Trader signals.
 - **Multi-Modal Execution**: Seamlessly falls back from direct API execution to browser-based Playwright automation, and desktop GUI click actions if API endpoints fail.
 - **Real-Time Log Stream**: Stream system logs and diagnostic terminals directly to your web browser.
 
@@ -40,16 +41,14 @@ chmod +x scripts/install.sh
 ./scripts/install.sh
 ```
 
-### 3. Log In to the Dashboard
-Start the API and web server:
+### 3. Start the terminal
 ```bash
 source venv/bin/activate
-python cli.py dashboard
+python cli.py platform start
 ```
-*(If running as a background service, it will already be running on port `8080`)*
+This starts Dexter and opens **Fincept Terminal** (the desktop UI). Source for that UI is in `terminal/` (AGPL-3.0). After a Qt 6.8.3 build of `terminal/fincept-qt`, the home desk is **Alpha Trader**.
 
-- Open your browser and navigate to: **`http://localhost:8080/`** (or your server's IP address if hosting on a VPS).
-- Log in with the default password: **`alpha2026`**
+Web fallback (optional): `python cli.py dashboard` then `http://localhost:8080/`.
 
 ### 4. Configure via Web Settings
 Once logged in:
@@ -92,7 +91,10 @@ python cli.py brief
 # Run prediction market arbitrage scanner
 python cli.py arb
 
-# Launch the web dashboard (API + built frontend)
+# Desktop UI (Fincept) + Dexter
+python cli.py platform start
+
+# React fallback web dashboard
 python cli.py dashboard
 
 # Run research / analyst / audit commands
@@ -112,15 +114,15 @@ python cli.py audit verify
 
 ```
 ├── cli.py                  # CLI command center entry point
+├── terminal/               # Desktop UI (Fincept Qt, AGPL-3.0)
+│   └── fincept-qt/         # C++20/Qt6 workstation; Alpha Trader is the home desk
+├── dexter/                 # FastAPI brain
 ├── config/                 # YAML configuration templates
-├── dexter/                 # FastAPI backend server & state manager
 ├── python-gateway/         # FastAPI microservice for local tool executions
 ├── scripts/                # Installation and authentication scripts
 ├── standalone/             # Scheduler daemon and workflow engines
 ├── tools/                  # Market feeds, broker connectors, and strategy brains
-├── web/                    # React dashboard source code
-│   ├── dist/               # Pre-compiled static assets (ready to serve!)
-│   └── src/                # Front-end code (App.jsx, Settings.jsx, etc.)
+├── web/                    # React fallback dashboard
 └── workflows/              # Structured trading schemas (YAML files)
 ```
 

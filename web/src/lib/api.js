@@ -7,7 +7,7 @@ async function request(path, options = {}) {
       'Content-Type': 'application/json',
       ...(options.headers || {}),
     },
-    credentials: 'same-origin',
+    credentials: API_BASE ? 'include' : 'same-origin',
   })
   if (res.status === 401) {
     const err = new Error('Unauthorized')
@@ -66,5 +66,21 @@ export const api = {
   tradovatePositions: () => request('/api/tradovate/positions'),
   tradovateOrders: () => request('/api/tradovate/orders'),
   tradovatePlaceOrder: (body) => request('/api/tradovate/order', { method: 'POST', body: JSON.stringify(body) }),
+
+  platformDesk: () => request('/api/platform/desk'),
+  platformStatus: () => request('/api/platform/status'),
+  platformBrain: () => request('/api/platform/brain'),
+  platformInventory: () => request('/api/platform/inventory'),
+  platformHummingbot: () => request('/api/platform/hummingbot'),
+  platformVibe: () => request('/api/platform/vibe'),
+  platformQuotes: (symbols = '') =>
+    request(`/api/platform/quotes${symbols ? `?symbols=${encodeURIComponent(symbols)}` : ''}`),
+  platformOhlcv: (symbol, timespan = '1d') =>
+    request(`/api/platform/ohlcv?symbol=${encodeURIComponent(symbol)}&timespan=${encodeURIComponent(timespan)}`),
+  platformNews: (symbol = 'SPY') =>
+    request(`/api/platform/news?symbol=${encodeURIComponent(symbol)}&limit=12`),
+  platformChat: (message) => request('/api/platform/chat', { method: 'POST', body: JSON.stringify({ message }) }),
+  platformExecute: (body) => request('/api/platform/execute', { method: 'POST', body: JSON.stringify(body) }),
+  launchFincept: () => request('/api/platform/fincept/launch', { method: 'POST', body: '{}' }),
 }
 

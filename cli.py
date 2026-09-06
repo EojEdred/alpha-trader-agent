@@ -1466,5 +1466,273 @@ def audit_verify():
         raise typer.Exit(1)
 
 
+
+# ─── FMZ STRATEGY COMMANDS ───
+
+fmz_app = typer.Typer(help="FMZ Quant strategy catalog commands")
+app.add_typer(fmz_app, name="fmz")
+
+
+@fmz_app.command("list")
+def fmz_list(
+    status: Optional[str] = typer.Option(None, "--status", help="Filter: ok, pinescript_only, no_source, unsupported_language"),
+    limit: int = typer.Option(50, "--limit", "-l", help="Maximum strategies to show"),
+):
+    """List FMZ strategies imported from the fmzquant/strategies submodule."""
+    from strategies.fmz_parser import FMZParser
+
+    parser = FMZParser()
+    try:
+        catalog = parser.load_catalog()
+    except FileNotFoundError:
+        console.print("[red]FMZ catalog not found. Run: python strategies/fmz_parser.py[/red]")
+        raise typer.Exit(1)
+
+    if status:
+        catalog = [s for s in catalog if s.parse_status == status]
+
+    table = Table(title=f"FMZ Strategies ({len(catalog)} total)")
+    table.add_column("Identifier", style="cyan")
+    table.add_column("Name")
+    table.add_column("Lang")
+    table.add_column("Status", style="dim")
+    table.add_column("Args", justify="right")
+
+    for entry in catalog[:limit]:
+        table.add_row(
+            entry.python_identifier,
+            entry.name[:50],
+            entry.source_language or "-",
+            entry.parse_status,
+            str(len(entry.arguments)),
+        )
+    console.print(table)
+
+
+@fmz_app.command("run")
+def fmz_run(
+    identifier: str = typer.Argument(..., help="FMZ strategy identifier (e.g., fmz_30)"),
+    symbol: str = typer.Option("SPY", "--symbol", "-s", help="Symbol to run against"),
+    dry_run: bool = typer.Option(True, "--dry-run/--live", help="Dry run mode (default: true)"),
+):
+    """Run a single FMZ strategy against synthetic market data."""
+    from strategies.fmz_parser import FMZParser
+    from strategies.fmz_runtime import FMZRuntime
+    import pandas as pd
+    import numpy as np
+
+    parser = FMZParser()
+    try:
+        catalog = parser.load_catalog()
+    except FileNotFoundError:
+        console.print("[red]FMZ catalog not found. Run: python strategies/fmz_parser.py[/red]")
+        raise typer.Exit(1)
+
+    entry = next((s for s in catalog if s.python_identifier == identifier), None)
+    if not entry:
+        console.print(f"[red]Strategy {identifier} not found in catalog.[/red]")
+        raise typer.Exit(1)
+
+    if entry.parse_status != "ok":
+        console.print(f"[yellow]Strategy {identifier} is {entry.parse_status}; cannot execute.[/yellow]")
+        raise typer.Exit(1)
+
+    # Synthetic OHLCV data with a recent uptrend.
+    n = 100
+    prices = 100 + np.cumsum(np.random.randn(n) * 0.3)
+    df = pd.DataFrame({
+        "open": prices - 0.2,
+        "high": prices + 0.5,
+        "low": prices - 0.5,
+        "close": prices,
+        "volume": np.random.randint(1000, 10000, n),
+    })
+
+    args = {a["argument"]: a.get("default", "") for a in entry.arguments}
+    runtime = FMZRuntime(
+        source_code=entry.source_code,
+        language=entry.source_language,
+        args=args,
+        strategy_name=entry.python_identifier,
+    )
+    signals = runtime.run(symbol=symbol, ohlcv_df=df, tick_limit=2)
+
+    if not signals:
+        console.print(f"[yellow]No signals generated for {identifier} on {symbol}.[/yellow]")
+        return
+
+    table = Table(title=f"Signals from {identifier}")
+    table.add_column("Symbol")
+    table.add_column("Direction")
+    table.add_column("Entry", justify="right")
+    table.add_column("Stop", justify="right")
+    table.add_column("Target", justify="right")
+    for sig in signals:
+        table.add_row(sig.symbol, sig.direction, str(sig.entry_price), str(sig.stop_price), str(sig.target_price))
+    console.print(table)
+
+
+@fmz_app.command("batch")
+def fmz_batch(
+    limit: int = typer.Option(50, "--limit", "-l", help="Number of strategies to run"),
+    symbol: str = typer.Option("SPY", "--symbol", "-s", help="Symbol to run against"),
+):
+    """Run a batch of FMZ strategies and report how many produce signals."""
+    from strategies.fmz_parser import FMZParser
+    from strategies.fmz_runtime import FMZRuntime
+    import pandas as pd
+    import numpy as np
+
+    parser = FMZParser()
+    catalog = parser.load_catalog()
+    runnable = [s for s in catalog if s.parse_status == "ok"][:limit]
+
+    n = 100
+    prices = 100 + np.cumsum(np.random.randn(n) * 0.3)
+    df = pd.DataFrame({
+        "open": prices - 0.2,
+        "high": prices + 0.5,
+        "low": prices - 0.5,
+        "close": prices,
+        "volume": np.random.randint(1000, 10000, n),
+    })
+
+    total_signals = 0
+    with_signal = 0
+    for entry in runnable:
+        args = {a["argument"]: a.get("default", "") for a in entry.arguments}
+        runtime = FMZRuntime(
+            source_code=entry.source_code,
+            language=entry.source_language,
+            args=args,
+            strategy_name=entry.python_identifier,
+        )
+        try:
+            signals = runtime.run(symbol=symbol, ohlcv_df=df, tick_limit=1)
+            if signals:
+                with_signal += 1
+                total_signals += len(signals)
+        except Exception as e:
+            console.print(f"[dim]{entry.python_identifier}: {e}[/dim]")
+
+    console.print(f"[green]Ran {len(runnable)} FMZ strategies; {with_signal} produced {total_signals} signals.[/green]")
+
+
+@fmz_app.command("generate")
+def fmz_generate():
+    """Regenerate FMZ strategy wrappers from the catalog."""
+    import subprocess
+
+    result = subprocess.run(
+        ["python", "scripts/generate_fmz_strategies.py"],
+        cwd=Path(__file__).parent,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        console.print(f"[red]Generation failed:\n{result.stderr}[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]{result.stdout.strip().splitlines()[-1]}[/green]")
+
+
+@app.command()
+def ask(prompt: str = typer.Argument(..., help="Message for the Dexter brain")):
+    """Talk to the Dexter brain (HTTP to the running platform)."""
+    import json
+    from urllib.error import URLError, HTTPError
+    from urllib.request import Request, urlopen
+
+    payload = json.dumps({"message": prompt}).encode()
+    req = Request(
+        "http://127.0.0.1:8080/api/platform/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode())
+    except HTTPError as e:
+        console.print(f"[red]Dexter HTTP {e.code}[/red]")
+        raise typer.Exit(1)
+    except URLError as e:
+        console.print(f"[red]Dexter is not running: {e.reason}[/red]")
+        raise typer.Exit(1)
+    console.print(data.get("text") or data.get("response") or "")
+
+
+mcp_app = typer.Typer(help="MCP sidecar for personal Fincept Terminal use")
+app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.command("serve")
+def mcp_serve():
+    """Run the read-only Alpha Trader MCP server on stdio (for Fincept)."""
+    from tools.alpha_trader_mcp_server import main as serve_mcp
+
+    serve_mcp()
+
+
+platform_app = typer.Typer(help="Unified Fincept + Hummingbot + Vibe + AutoHedge platform")
+app.add_typer(platform_app, name="platform")
+
+
+@platform_app.command("status")
+def platform_status():
+    """Print health of every forked component."""
+    from alpha_platform.registry import component_status
+
+    payload = component_status()
+    for comp in payload["components"]:
+        mark = "[green]OK[/green]" if comp["ok"] else "[red]MISSING[/red]"
+        console.print(f"{mark}  {comp['name']}  [dim]{comp['role']}[/dim]")
+    if payload["ok"]:
+        console.print("\n[bold green]Platform catalog is complete.[/bold green]")
+    else:
+        console.print("\n[bold yellow]Some components are missing.[/bold yellow]")
+
+
+@platform_app.command("start")
+def platform_start(
+    port: int = typer.Option(8080, "--port", "-p"),
+    host: str = typer.Option("127.0.0.1", "--host"),
+    no_fincept: bool = typer.Option(False, "--no-fincept", help="Do not open Fincept Terminal"),
+    no_open: bool = typer.Option(False, "--no-open", help="Do not open the web dashboard"),
+):
+    """Start Dexter, open Fincept, and print MCP attach instructions."""
+    from alpha_platform.launch import launch_fincept
+    from alpha_platform.paths import forks
+    from alpha_platform.registry import component_status
+
+    f = forks()
+    status = component_status()
+    console.print("[bold]Alpha Trader Platform[/bold]\n")
+    for comp in status["components"]:
+        mark = "ok" if comp["ok"] else "missing"
+        console.print(f"  {mark:8} {comp['name']}")
+
+    if not no_fincept:
+        result = launch_fincept()
+        console.print(f"\nFincept: {result['status']}")
+
+    python = f.agent / "venv" / "bin" / "python"
+    mcp = f.agent / "tools" / "alpha_trader_mcp_server.py"
+    console.print("\n[bold]Attach inside Fincept → Settings → MCP Servers[/bold]")
+    console.print(f"  Name:     Alpha Trader")
+    console.print(f"  Command:  {python if python.exists() else sys.executable}")
+    console.print(f"  Args:     {mcp}")
+    console.print("\n[bold]Desktop UI is Fincept[/bold] (source in terminal/, AGPL).")
+    console.print("  Home screen after a custom Qt build: Alpha Trader desk.")
+    console.print(f"  Web fallback: http://{host}:{port}/platform")
+
+    dist_ok = (f.agent / "web" / "dist" / "index.html").exists()
+    dashboard(
+        port=port,
+        host=host,
+        dev=not dist_ok,
+        no_open=no_open,
+    )
+
+
 if __name__ == "__main__":
     app()
